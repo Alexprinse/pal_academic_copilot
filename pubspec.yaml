@@ -1,0 +1,44 @@
+name: pal_academic_copilot
+description: "On-Device Academic Copilot for iQOO 15"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # 1. On-Device LLM (llama.cpp engine)
+  llama_cpp_dart: ^0.9.0-dev.12
+
+  # 2. On-Device Speech-to-Text (Whisper Tiny INT8)
+  sherpa_onnx: ^1.13.7
+  record: ^7.1.1
+  speech_to_text: ^7.4.0
+
+  # 3. On-Device Textbook & Homework OCR
+  google_mlkit_text_recognition: ^0.17.1
+  image_picker: ^1.2.3
+
+  # 4. On-Device RAG & PDF Text Extraction (Pure Dart, zero NDK conflicts)
+  syncfusion_flutter_pdf: ^34.2.7
+
+  # 5. File System & Utilities
+  path_provider: ^2.1.6
+  file_picker: ^8.1.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Whisper Model Assets
+  assets:
+    - assets/models/whisper-tiny-en/
+    - assets/models/whisper-tiny-en/sherpa-onnx-whisper-tiny.en/
