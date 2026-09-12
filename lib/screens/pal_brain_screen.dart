@@ -251,15 +251,6 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'On-Device GGUF Engine',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.textPrimary,
                       const Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -272,13 +263,6 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                                 color: AppTheme.textPrimary,
                               ),
                             ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Direct POSIX mmap • Hexagon NPU & Adreno GPU • Off-Thread Isolate',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppTheme.cyanAccent,
                             SizedBox(height: 2),
                             Text(
                               'Direct POSIX mmap • Hexagon NPU & Adreno GPU • Off-Thread Isolate',
@@ -287,8 +271,6 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                                 color: AppTheme.cyanAccent,
                               ),
                             ),
-                          ),
-                        ],
                           ],
                         ),
                       ),
