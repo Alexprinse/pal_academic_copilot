@@ -488,6 +488,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       padding: const EdgeInsets.all(14),
       decoration: AppTheme.cardDecoration,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Class icon / mic button
           InkWell(
@@ -524,6 +525,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       item.code,
@@ -534,18 +536,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         letterSpacing: 0.2,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '• ${item.time}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: AppTheme.textSecondary,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: item.isReadyToRecord
+                            ? AppTheme.detectedPillFill
+                            : AppTheme.neutralPillFill,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        item.status,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: item.isReadyToRecord
+                              ? AppTheme.detectedPillText
+                              : AppTheme.textSecondary,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
                   item.name,
                   maxLines: 1,
@@ -557,36 +570,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     color: AppTheme.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  item.room,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textSecondary,
-                  ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${item.time} • ${item.room}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Status Chip
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            decoration: BoxDecoration(
-              color: item.isReadyToRecord
-                  ? AppTheme.detectedPillFill
-                  : AppTheme.neutralPillFill,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              item.status,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: item.isReadyToRecord
-                    ? AppTheme.detectedPillText
-                    : AppTheme.textSecondary,
-              ),
             ),
           ),
         ],
@@ -766,6 +767,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 2),
                 Text(
                   '${task.course} • ${task.countdownString}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
