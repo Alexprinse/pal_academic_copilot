@@ -1,95 +1,111 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color bgDark = Color(0xFF090D16);
-  static const Color surfaceDark = Color(0xFF131B2A);
-  static const Color cardDark = Color(0xFF1A2336);
-  static const Color cardBorder = Color(0xFF263552);
+  // Warm Paper & Scholarly Gold Palette
+  static const Color canvasBg = Color(0xFFFBF9F4);
+  static const Color cardSurface = Color(0xFFFFFFFF);
+  static const Color cardBorder = Color(0xFFEAE6DC);
 
-  // Accents
-  static const Color cyanAccent = Color(0xFF00E5FF);
-  static const Color amberAccent = Color(0xFFFFB300);
-  static const Color greenAccent = Color(0xFF00E676);
-  static const Color purpleAccent = Color(0xFF7C4DFF);
-  static const Color redAccent = Color(0xFFFF5252);
+  static const Color textPrimary = Color(0xFF1E1D19);
+  static const Color textSecondary = Color(0xFF706C62);
+  static const Color textInactive = Color(0xFF9C9686);
 
-  static const Color textPrimary = Color(0xFFF0F4FC);
-  static const Color textSecondary = Color(0xFF8E9BB5);
-  static const Color textMuted = Color(0xFF5A6987);
+  static const Color primaryAccent = Color(0xFFB88628);
+  static const Color darkSurface = Color(0xFF1E1D19);
 
-  static ThemeData get darkTheme {
+  // Semantic Pill Tokens
+  static const Color trustPillFill = Color(0xFFEAF2EC);
+  static const Color trustPillText = Color(0xFF2D6A4F);
+
+  static const Color detectedPillFill = Color(0xFFFDF4E7);
+  static const Color detectedPillText = Color(0xFF9C631A);
+
+  static const Color overduePillFill = Color(0xFFFBEAE7);
+  static const Color overduePillText = Color(0xFFC0392B);
+
+  static const Color neutralPillFill = Color(0xFFF0EDE3);
+  static const Color neutralPillText = Color(0xFF706C62);
+
+  static const Color highlightBg = Color(0xFFFFF2D6);
+
+  // Transitional compatibility aliases for remaining screens being upgraded
+  static const Color bgDark = canvasBg;
+  static const Color surfaceDark = cardSurface;
+  static const Color cardDark = cardSurface;
+  static const Color cardBorderDark = cardBorder;
+  static const Color cyanAccent = primaryAccent;
+  static const Color amberAccent = primaryAccent;
+  static const Color purpleAccent = primaryAccent;
+  static const Color greenAccent = trustPillText;
+  static const Color redAccent = overduePillText;
+  static const Color textMuted = textSecondary;
+
+  static ThemeData get darkTheme => lightTheme;
+
+  // Soft diffused elevation card shadow
+  static const List<BoxShadow> cardShadow = [
+    BoxShadow(
+      color: Color(0x0A1E1D19), // 4% rgba(30,29,25,0.04)
+      blurRadius: 10,
+      offset: Offset(0, 2),
+    ),
+    BoxShadow(
+      color: Color(0x081E1D19), // 3% rgba(30,29,25,0.03)
+      blurRadius: 2,
+      offset: Offset(0, 1),
+    ),
+  ];
+
+  static BoxDecoration get cardDecoration => BoxDecoration(
+        color: cardSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cardBorder, width: 1),
+        boxShadow: cardShadow,
+      );
+
+  static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: bgDark,
-      primaryColor: cyanAccent,
-      colorScheme: const ColorScheme.dark(
-        primary: cyanAccent,
-        secondary: amberAccent,
-        surface: surfaceDark,
-        error: redAccent,
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: canvasBg,
+      primaryColor: primaryAccent,
+      colorScheme: const ColorScheme.light(
+        primary: primaryAccent,
+        secondary: primaryAccent,
+        surface: cardSurface,
+        error: overduePillText,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: bgDark,
+        backgroundColor: canvasBg,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
-        titleTextStyle: TextStyle(
-          color: textPrimary,
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          letterSpacing: -0.5,
-        ),
         iconTheme: IconThemeData(color: textPrimary),
       ),
       cardTheme: CardThemeData(
-        color: cardDark,
+        color: cardSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: const BorderSide(color: cardBorder, width: 1),
         ),
       ),
-      chipTheme: ChipThemeData(
-        backgroundColor: cardDark,
-        disabledColor: surfaceDark,
-        selectedColor: cyanAccent.withValues(alpha: 0.2),
-        secondarySelectedColor: amberAccent.withValues(alpha: 0.2),
-        labelStyle: const TextStyle(color: textPrimary, fontSize: 12),
-        secondaryLabelStyle: const TextStyle(color: amberAccent, fontSize: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: cardBorder),
-        ),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: cardDark,
-        hintStyle: const TextStyle(color: textMuted),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: cardBorder),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: cardBorder),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: cyanAccent, width: 1.5),
-        ),
-      ),
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: surfaceDark,
-        selectedItemColor: cyanAccent,
-        unselectedItemColor: textMuted,
+        backgroundColor: cardSurface,
+        selectedItemColor: textPrimary,
+        unselectedItemColor: textInactive,
         type: BottomNavigationBarType.fixed,
-        elevation: 10,
-        selectedLabelStyle:
-            TextStyle(fontWeight: FontWeight.w600, fontSize: 11),
-        unselectedLabelStyle:
-            TextStyle(fontWeight: FontWeight.w500, fontSize: 11),
+        elevation: 8,
+        selectedLabelStyle: TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+          color: textPrimary,
+        ),
+        unselectedLabelStyle: TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 12,
+          color: textInactive,
+        ),
       ),
     );
   }

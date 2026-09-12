@@ -12,6 +12,7 @@ import 'package:pal_academic_copilot/main.dart';
 void main() {
   testWidgets('Pal App smoke test', (WidgetTester tester) async {
     await tester.pumpWidget(const PalApp());
-    expect(find.text('Pal'), findsOneWidget);
+    expect(find.byType(PalApp), findsOneWidget);
+    expect(find.text('Home'), findsOneWidget);
   });
 }

@@ -48,18 +48,24 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: AppTheme.cardDark,
+          backgroundColor: AppTheme.cardSurface,
           content: Row(
             children: [
               const SizedBox(
                 width: 16,
                 height: 16,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: AppTheme.cyanAccent),
+                    strokeWidth: 2, color: AppTheme.primaryAccent),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('Indexing "$name" with Pure Dart PDF Parser...'),
+                child: Text(
+                  'Indexing "$name" on-device...',
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13,
+                  ),
+                ),
               ),
             ],
           ),
@@ -76,15 +82,23 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: AppTheme.cardDark,
+            backgroundColor: AppTheme.cardSurface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: AppTheme.cardBorder),
+            ),
             content: Row(
               children: [
                 const Icon(Icons.check_circle,
-                    color: AppTheme.greenAccent, size: 20),
+                    color: AppTheme.trustPillText, size: 20),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Indexed ${doc.chunkCount} chunks across ${doc.pageCount} pages!',
+                    'Indexed ${doc.chunkCount} chunks across ${doc.pageCount} pages in $unitName!',
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -95,14 +109,193 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
     }
   }
 
+  void _showAddSubjectDialog() {
+    final subjectCtrl = TextEditingController();
+    final unitCtrl = TextEditingController(text: 'Unit 1: Introduction & Fundamentals');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.cardSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Add New Subject',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: AppTheme.textInactive),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: subjectCtrl,
+              autofocus: true,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'Subject Name',
+                hintText: 'e.g., Computer Networks, Linear Algebra',
+                filled: true,
+                fillColor: AppTheme.neutralPillFill,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: unitCtrl,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'First Unit Name',
+                hintText: 'e.g., Unit 1: Physical Layer',
+                filled: true,
+                fillColor: AppTheme.neutralPillFill,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () {
+                  final name = subjectCtrl.text.trim();
+                  final unit = unitCtrl.text.trim();
+                  if (name.isNotEmpty) {
+                    _ragService.addSubject(
+                      name,
+                      iconCode: 'school',
+                      initialUnits: unit.isNotEmpty ? [unit] : null,
+                    );
+                    Navigator.pop(ctx);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.darkSurface,
+                  foregroundColor: AppTheme.canvasBg,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text(
+                  'Add Subject',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddUnitDialog(String subjectName) {
+    final unitCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Add Unit to $subjectName',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+        content: TextField(
+          controller: unitCtrl,
+          autofocus: true,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'e.g. Unit 3: Memory Management',
+            filled: true,
+            fillColor: AppTheme.neutralPillFill,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppTheme.cardBorder),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final unitName = unitCtrl.text.trim();
+              if (unitName.isNotEmpty) {
+                _ragService.addUnit(subjectName, unitName);
+                Navigator.pop(ctx);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryAccent,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Add Unit'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.canvasBg,
       appBar: AppBar(
+        backgroundColor: AppTheme.canvasBg,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Study Vault'),
+            Text(
+              'Study Vault',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary,
+              ),
+            ),
             Text(
               'Subject & Unit RAG Knowledge Base',
               style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
@@ -111,24 +304,23 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
         ),
         actions: [
           Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            margin: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: AppTheme.surfaceDark,
+              color: AppTheme.neutralPillFill,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppTheme.cardBorder),
             ),
             child: Row(
               children: [
-                const Icon(Icons.data_array,
-                    size: 14, color: AppTheme.cyanAccent),
+                const Text('📚', style: TextStyle(fontSize: 12)),
                 const SizedBox(width: 6),
                 Text(
                   '${_ragService.totalIndexedChunks} Chunks',
                   style: const TextStyle(
                     fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.cyanAccent,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.neutralPillText,
                   ),
                 ),
               ],
@@ -142,14 +334,10 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
           // RAG In-Memory Status Banner
           Container(
             padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppTheme.cardDark,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppTheme.cardBorder),
-            ),
+            decoration: AppTheme.cardDecoration,
             child: const Row(
               children: [
-                Icon(Icons.bolt, color: AppTheme.amberAccent, size: 22),
+                Icon(Icons.bolt, color: AppTheme.primaryAccent, size: 22),
                 SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -158,7 +346,7 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
                       Text(
                         'In-Memory BM25 Lexical Retriever',
                         style: TextStyle(
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w700,
                           fontSize: 13,
                           color: AppTheme.textPrimary,
                         ),
@@ -167,7 +355,9 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
                       Text(
                         'Zero-NDK collision, <5ms retrieval latency, 100% offline.',
                         style: TextStyle(
-                            fontSize: 11, color: AppTheme.textSecondary),
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
                       ),
                     ],
                   ),
@@ -175,21 +365,94 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
 
-          const Text(
-            'Enrolled Subjects',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textPrimary,
-            ),
+          const SizedBox(height: 18),
+
+          // Enrolled Subjects Header + "+ Add Subject" Button
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Enrolled Subjects',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              InkWell(
+                onTap: _showAddSubjectDialog,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.detectedPillFill,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppTheme.detectedPillText.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add, size: 14, color: AppTheme.detectedPillText),
+                      SizedBox(width: 4),
+                      Text(
+                        'Add Subject',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.detectedPillText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
+
           const SizedBox(height: 12),
 
           ..._ragService.subjects.map((subject) => _buildSubjectCard(subject)),
 
-          const SizedBox(height: 80),
+          const SizedBox(height: 20),
+
+          // Large Add Subject Card button at the bottom
+          InkWell(
+            onTap: _showAddSubjectDialog,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                color: AppTheme.neutralPillFill.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppTheme.cardBorder,
+                  width: 1.2,
+                ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_circle_outline,
+                      size: 20, color: AppTheme.primaryAccent),
+                  SizedBox(width: 8),
+                  Text(
+                    'Add Another Subject',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.primaryAccent,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 60),
         ],
       ),
     );
@@ -197,12 +460,8 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
 
   Widget _buildSubjectCard(VaultSubject subject) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: AppTheme.cardDark,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: AppTheme.cardDecoration,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
@@ -210,16 +469,16 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
           leading: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppTheme.purpleAccent.withValues(alpha: 0.12),
+              color: AppTheme.detectedPillFill,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(Icons.school,
-                color: AppTheme.purpleAccent, size: 20),
+            child: const Icon(Icons.school_outlined,
+                color: AppTheme.detectedPillText, size: 20),
           ),
           title: Text(
             subject.name,
             style: const TextStyle(
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
               fontSize: 15,
               color: AppTheme.textPrimary,
             ),
@@ -228,13 +487,33 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
             '${subject.units.length} Units • ${subject.totalDocuments} PDFs • ${subject.totalChunks} Chunks',
             style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
           ),
+          trailing: IconButton(
+            icon: const Icon(Icons.add, size: 20, color: AppTheme.primaryAccent),
+            tooltip: 'Add Unit',
+            onPressed: () => _showAddUnitDialog(subject.name),
+          ),
           children: [
             Padding(
-              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 14),
+              padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12),
               child: Column(
-                children: subject.units
-                    .map((unit) => _buildUnitItem(subject, unit))
-                    .toList(),
+                children: [
+                  ...subject.units
+                      .map((unit) => _buildUnitItem(subject, unit)),
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    onPressed: () => _showAddUnitDialog(subject.name),
+                    icon: const Icon(Icons.add,
+                        size: 15, color: AppTheme.primaryAccent),
+                    label: Text(
+                      'Add Unit to ${subject.name}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.primaryAccent,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -248,7 +527,7 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceDark,
+        color: AppTheme.canvasBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.cardBorder),
       ),
@@ -262,21 +541,21 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
                 child: Text(
                   unit.name,
                   style: const TextStyle(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w700,
                     fontSize: 13,
-                    color: AppTheme.cyanAccent,
+                    color: AppTheme.textPrimary,
                   ),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.add_circle_outline,
-                    size: 18, color: AppTheme.cyanAccent),
+                icon: const Icon(Icons.upload_file_outlined,
+                    size: 18, color: AppTheme.primaryAccent),
                 tooltip: 'Add PDF Notes',
                 onPressed: () => _pickAndIndexPdf(subject.name, unit.name),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             '${unit.documents.length} PDF Notes uploaded (${unit.totalChunks} Chunks indexed)',
             style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
@@ -288,12 +567,12 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
             runSpacing: 6,
             children: [
               ActionChip(
-                avatar: const Icon(Icons.psychology,
-                    size: 14, color: AppTheme.cyanAccent),
+                avatar: const Icon(Icons.auto_awesome,
+                    size: 13, color: AppTheme.primaryAccent),
                 label: const Text('Ask Pal from Unit'),
                 onPressed: () {
                   widget.onNavigateToBrain(
-                    4,
+                    2, // Ask tab
                     initialQuery:
                         'Summarize the core principles of ${unit.name}',
                     filterSubject: subject.name,
@@ -303,11 +582,11 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
               ),
               ActionChip(
                 avatar: const Icon(Icons.quiz_outlined,
-                    size: 14, color: AppTheme.amberAccent),
+                    size: 13, color: AppTheme.detectedPillText),
                 label: const Text('Generate 3 Quiz Qs'),
                 onPressed: () {
                   widget.onNavigateToBrain(
-                    4,
+                    2, // Ask tab
                     initialQuery:
                         'Generate 3 practice exam questions with detailed answers based on ${unit.name}',
                     filterSubject: subject.name,

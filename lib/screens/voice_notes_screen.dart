@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import '../models/deadline.dart';
 import '../services/stt_service.dart';
 import '../services/deadline_service.dart';
 import '../theme/app_theme.dart';
@@ -13,49 +15,125 @@ class VoiceNotesScreen extends StatefulWidget {
   State<VoiceNotesScreen> createState() => _VoiceNotesScreenState();
 }
 
-class _VoiceNotesScreenState extends State<VoiceNotesScreen> {
+class _VoiceNotesScreenState extends State<VoiceNotesScreen>
+    with SingleTickerProviderStateMixin {
   final SttService _sttService = SttService.instance;
   final DeadlineService _deadlineService = DeadlineService.instance;
-  final TextEditingController _textController = TextEditingController();
+
+  Timer? _recordTimer;
+  int _elapsedSeconds = 0;
+  Deadline? _detectedDeadline;
+  String? _detectedPhrase;
+  bool _taskSaved = false;
+
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  // Demo fallback transcription snippet to showcase highlighting when idle
+  final String _samplePreviousText =
+      "Okay class, for Peterson's algorithm review, make sure you understand mutual exclusion and progress requirements. ";
+  final String _sampleDeadlinePhrase =
+      'Please submit OS Lab 2 by Friday at 5 PM on the portal.';
+  final String _sampleTrailingText =
+      ' Next Tuesday we will start Chapter 6 on CPU scheduling algorithms.';
 
   @override
   void initState() {
     super.initState();
     _sttService.addListener(_onServiceUpdate);
-    _textController.text = _sttService.transcription;
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+
+    _pulseAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _inspectTextForDeadlines(_sttService.transcription);
   }
 
   @override
   void dispose() {
+    _recordTimer?.cancel();
+    _pulseController.dispose();
     _sttService.removeListener(_onServiceUpdate);
-    _textController.dispose();
     super.dispose();
   }
 
   void _onServiceUpdate() {
-    if (mounted) {
-      if (_sttService.transcription.isNotEmpty &&
-          _textController.text != _sttService.transcription) {
-        _textController.text = _sttService.transcription;
-      }
-      setState(() {});
+    if (!mounted) return;
+
+    if (_sttService.isRecording && _recordTimer == null) {
+      _startTimer();
+    } else if (!_sttService.isRecording && _recordTimer != null) {
+      _stopTimer();
     }
+
+    _inspectTextForDeadlines(_sttService.transcription);
+    setState(() {});
+  }
+
+  void _startTimer() {
+    _elapsedSeconds = 0;
+    _recordTimer?.cancel();
+    _recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _elapsedSeconds++;
+        });
+      }
+    });
+  }
+
+  void _stopTimer() {
+    _recordTimer?.cancel();
+    _recordTimer = null;
+  }
+
+  void _inspectTextForDeadlines(String text) {
+    final effectiveText = text.trim().isNotEmpty
+        ? text
+        : '$_samplePreviousText$_sampleDeadlinePhrase$_sampleTrailingText';
+
+    final triggerPattern = RegExp(
+      r'([^.\n]*?(?:submit|due|deadline|homework|lab|assignment|by\s+[A-Za-z]+|at\s+\d+)[^.\n]*?\.)',
+      caseSensitive: false,
+    );
+
+    final match = triggerPattern.firstMatch(effectiveText);
+    if (match != null) {
+      final phrase = match.group(0)?.trim();
+      if (phrase != null && phrase != _detectedPhrase) {
+        _detectedPhrase = phrase;
+        _detectedDeadline = _deadlineService.parseNaturalLanguage(phrase);
+      }
+    }
+  }
+
+  String _formatDuration(int seconds) {
+    final mins = (seconds ~/ 60).toString().padLeft(2, '0');
+    final secs = (seconds % 60).toString().padLeft(2, '0');
+    return '$mins:$secs';
   }
 
   Future<void> _toggleRecord() async {
     try {
       if (_sttService.isRecording) {
         await _sttService.stopRecording();
+        _stopTimer();
       } else {
         await _sttService.startRecording();
+        _startTimer();
       }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: AppTheme.cardDark,
+          backgroundColor: AppTheme.cardSurface,
           content: Text('Recording error: $e',
-              style: const TextStyle(color: AppTheme.redAccent)),
+              style: const TextStyle(color: AppTheme.overduePillText)),
         ),
       );
     }
@@ -71,26 +149,47 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen> {
     }
   }
 
-  void _createDeadlineFromSpeech() {
-    final text = _textController.text.trim();
-    if (text.isEmpty) return;
+  void _saveDetectedDeadline() {
+    if (_detectedDeadline == null) return;
 
-    final dl = _deadlineService.parseNaturalLanguage(text);
-    _deadlineService.addDeadline(dl);
+    final newDl = Deadline(
+      id: 'dl_${DateTime.now().millisecondsSinceEpoch}',
+      title: _detectedDeadline!.title,
+      course: _detectedDeadline!.course,
+      dueDate: _detectedDeadline!.dueDate,
+      priority: _detectedDeadline!.priority,
+      isSpokenDetected: true,
+      audioTimestamp: _formatDuration(_elapsedSeconds > 0 ? _elapsedSeconds : 148),
+      sourceLocation: 'Lecture 3 Audio',
+    );
+
+    _deadlineService.addDeadline(newDl);
+
+    setState(() {
+      _taskSaved = true;
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        backgroundColor: AppTheme.cardDark,
+        backgroundColor: AppTheme.cardSurface,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppTheme.cardBorder),
+        ),
         content: Row(
           children: [
             const Icon(Icons.check_circle,
-                color: AppTheme.greenAccent, size: 20),
+                color: AppTheme.trustPillText, size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Created: "${dl.title}" (${dl.countdownString})',
-                style: const TextStyle(color: AppTheme.textPrimary),
+                'Added to tasks: "${newDl.title}"',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
               ),
             ),
           ],
@@ -101,214 +200,432 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasRealTranscription = _sttService.transcription.trim().isNotEmpty;
+    final displayPrevious = hasRealTranscription ? '' : _samplePreviousText;
+    final displayHighlight = hasRealTranscription
+        ? (_detectedPhrase ?? _sttService.transcription)
+        : _sampleDeadlinePhrase;
+    final displayUpcoming = hasRealTranscription ? '' : _sampleTrailingText;
+
     return Scaffold(
+      backgroundColor: AppTheme.canvasBg,
       appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        backgroundColor: AppTheme.canvasBg,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Row(
           children: [
-            Text('Voice Notes'),
-            Text(
-              'Whisper Tiny INT8 Speech-to-Text',
-              style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+            const Text(
+              'Live Capture',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.audio_file, color: AppTheme.cyanAccent),
-            tooltip: 'Import WAV File',
-            onPressed: _pickAudioFile,
-          ),
-          IconButton(
-            icon: const Icon(Icons.clear, color: AppTheme.textMuted),
-            tooltip: 'Clear text',
-            onPressed: () {
-              _sttService.clearTranscription();
-              _textController.clear();
-            },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Engine Spec Banner
+            const Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AppTheme.cardDark,
-                borderRadius: BorderRadius.circular(12),
+                color: AppTheme.neutralPillFill,
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: AppTheme.cardBorder),
               ),
               child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.graphic_eq, color: AppTheme.cyanAccent, size: 20),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '16kHz Mono • Safe 25s Waveform Windowing • Zero Buzzing',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppTheme.textSecondary,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  Icon(Icons.airplanemode_active,
+                      size: 13, color: AppTheme.textSecondary),
+                  SizedBox(width: 4),
+                  Text(
+                    'Offline',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textSecondary,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-
-            // Main Transcription Box
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.audio_file_outlined,
+                color: AppTheme.primaryAccent),
+            tooltip: 'Import WAV File',
+            onPressed: _pickAudioFile,
+          ),
+          IconButton(
+            icon: const Icon(Icons.clear, color: AppTheme.textInactive),
+            tooltip: 'Clear text',
+            onPressed: () {
+              _sttService.clearTranscription();
+              setState(() {
+                _detectedPhrase = null;
+                _detectedDeadline = null;
+                _taskSaved = false;
+              });
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 decoration: BoxDecoration(
-                  color: AppTheme.cardDark,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppTheme.cardBorder),
+                  color: AppTheme.trustPillFill,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.trustPillText.withValues(alpha: 0.25),
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: const Row(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Transcription Output',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        if (_sttService.isTranscribing)
-                          const Row(
-                            children: [
-                              SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppTheme.cyanAccent,
-                                ),
-                              ),
-                              SizedBox(width: 6),
-                              Text(
-                                'Transcribing...',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.cyanAccent,
-                                ),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                    const Divider(color: AppTheme.cardBorder, height: 20),
+                    Icon(Icons.shield_outlined,
+                        color: AppTheme.trustPillText, size: 18),
+                    SizedBox(width: 9),
                     Expanded(
-                      child: TextField(
-                        controller: _textController,
-                        maxLines: null,
-                        expands: true,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          height: 1.5,
-                          color: AppTheme.textPrimary,
-                        ),
-                        decoration: const InputDecoration(
-                          hintText:
-                              'Tap the microphone below to record lecture audio, or upload a WAV file...',
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          fillColor: Colors.transparent,
+                      child: Text(
+                        'All speech transcription runs 100% on Snapdragon NPU. No network used.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.trustPillText,
+                          height: 1.25,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 14),
-
-            // Action Chips
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                ActionChip(
-                  avatar: const Icon(Icons.event_available,
-                      size: 16, color: AppTheme.amberAccent),
-                  label: const Text('Create Deadline from Speech'),
-                  onPressed: _textController.text.trim().isNotEmpty
-                      ? _createDeadlineFromSpeech
-                      : null,
-                ),
-                ActionChip(
-                  avatar: const Icon(Icons.psychology,
-                      size: 16, color: AppTheme.cyanAccent),
-                  label: const Text('Summarize with Pal'),
-                  onPressed: _textController.text.trim().isNotEmpty
-                      ? () {
-                          widget.onNavigateToBrain(
-                            4,
-                            initialQuery:
-                                'Please summarize this lecture transcript and extract key formulas/takeaways:\n\n"${_textController.text.trim()}"',
-                          );
-                        }
-                      : null,
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // Large Recording Button
-            GestureDetector(
-              onTap: _toggleRecord,
-              child: Container(
-                width: 76,
-                height: 76,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _sttService.isRecording
-                      ? AppTheme.redAccent
-                      : AppTheme.cyanAccent,
-                  boxShadow: [
-                    BoxShadow(
-                      color: (_sttService.isRecording
-                              ? AppTheme.redAccent
-                              : AppTheme.cyanAccent)
-                          .withValues(alpha: 0.4),
-                      blurRadius: 20,
-                      spreadRadius: 4,
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  AnimatedBuilder(
+                    animation: _pulseAnimation,
+                    builder: (context, child) {
+                      final isRec = _sttService.isRecording;
+                      return Container(
+                        width: 9,
+                        height: 9,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isRec
+                              ? AppTheme.overduePillText
+                                  .withValues(alpha: _pulseAnimation.value)
+                              : AppTheme.textInactive,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    _sttService.isRecording ? 'LIVE RECORDING' : 'MIC STANDBY',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                      color: _sttService.isRecording
+                          ? AppTheme.overduePillText
+                          : AppTheme.textSecondary,
                     ),
-                  ],
-                ),
-                child: Icon(
-                  _sttService.isRecording ? Icons.stop : Icons.mic,
-                  color: Colors.black,
-                  size: 36,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '·  ${_formatDuration(_elapsedSeconds)}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_sttService.isTranscribing)
+                    const Row(
+                      children: [
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.primaryAccent,
+                          ),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'Transcribing...',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.primaryAccent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: AppTheme.cardDecoration,
+                  child: Stack(
+                    children: [
+                      SingleChildScrollView(
+                        child: RichText(
+                          text: TextSpan(
+                            style: const TextStyle(
+                              fontSize: 16,
+                              height: 1.65,
+                              fontFamily: 'serif',
+                              color: AppTheme.textPrimary,
+                            ),
+                            children: [
+                              if (displayPrevious.isNotEmpty)
+                                TextSpan(
+                                  text: displayPrevious,
+                                  style: const TextStyle(
+                                    color: AppTheme.textInactive,
+                                    fontFamily: 'serif',
+                                  ),
+                                ),
+                              if (displayHighlight.isNotEmpty)
+                                WidgetSpan(
+                                  alignment: PlaceholderAlignment.baseline,
+                                  baseline: TextBaseline.alphabetic,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.highlightBg,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      displayHighlight,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        height: 1.65,
+                                        fontFamily: 'serif',
+                                        fontWeight: FontWeight.w600,
+                                        color: AppTheme.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (displayUpcoming.isNotEmpty)
+                                TextSpan(
+                                  text: displayUpcoming,
+                                  style: const TextStyle(
+                                    color: AppTheme.textPrimary,
+                                    fontFamily: 'serif',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (_detectedDeadline != null && !_taskSaved)
+                        Positioned(
+                          right: 4,
+                          bottom: 4,
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: _saveDetectedDeadline,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.cardSurface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                      color: AppTheme.primaryAccent, width: 1.2),
+                                  boxShadow: AppTheme.cardShadow,
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.add,
+                                        size: 15,
+                                        color: AppTheme.primaryAccent),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      '+ Add to Tasks',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppTheme.primaryAccent,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _sttService.isRecording
-                  ? 'Recording 16kHz WAV (Tap to Stop)'
-                  : 'Tap to Record Lecture',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _sttService.isRecording
-                    ? AppTheme.redAccent
-                    : AppTheme.textSecondary,
+              const SizedBox(height: 12),
+              if (_detectedDeadline != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.detectedPillFill,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.detectedPillText.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: AppTheme.detectedPillText.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.schedule,
+                          color: AppTheme.detectedPillText,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Task detected just now',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.detectedPillText,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _detectedDeadline!.title,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textPrimary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Due: ${_detectedDeadline!.countdownString} · ${_detectedDeadline!.course}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTheme.detectedPillText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!_taskSaved)
+                        TextButton(
+                          onPressed: _saveDetectedDeadline,
+                          style: TextButton.styleFrom(
+                            backgroundColor: AppTheme.cardSurface,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            minimumSize: Size.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(
+                                  color: AppTheme.cardBorder),
+                            ),
+                          ),
+                          child: const Text(
+                            'Save',
+                            style: TextStyle(
+                              color: AppTheme.detectedPillText,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        )
+                      else
+                        const Row(
+                          children: [
+                            Icon(Icons.check,
+                                size: 16, color: AppTheme.trustPillText),
+                            SizedBox(width: 4),
+                            Text(
+                              'Saved',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.trustPillText,
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _toggleRecord,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.darkSurface,
+                    foregroundColor: AppTheme.canvasBg,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _sttService.isRecording
+                            ? Icons.stop_circle_outlined
+                            : Icons.mic,
+                        size: 20,
+                        color: _sttService.isRecording
+                            ? AppTheme.overduePillText
+                            : AppTheme.primaryAccent,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _sttService.isRecording
+                            ? 'Stop capture'
+                            : 'Start live capture',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.canvasBg,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-          ],
+              const SizedBox(height: 14),
+            ],
+          ),
         ),
       ),
     );

@@ -198,177 +198,619 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        builder: (context, setModalState) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.82,
+            minChildSize: 0.5,
+            maxChildSize: 0.94,
+            expand: false,
+            builder: (context, scrollController) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'On-Device GGUF Presets',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: AppTheme.textMuted),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const Text(
-                'Hardware accelerated via Snapdragon Hexagon NPU & Adreno GPU',
-                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-              ),
-              const SizedBox(height: 16),
-              ..._llmService.presets.map((preset) {
-                final isActive = _llmService.activePreset?.id == preset.id;
-                final isLoaded = preset.status == ModelStatus.ready;
-                final isDownloaded = preset.status == ModelStatus.downloaded;
-                final isDownloading = preset.status == ModelStatus.downloading;
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppTheme.cardDark,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color:
-                          isActive ? AppTheme.cyanAccent : AppTheme.cardBorder,
-                      width: isActive ? 1.5 : 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  // 1. Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Text(
-                                preset.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                  color: AppTheme.textPrimary,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.cyanAccent
-                                      .withValues(alpha: 0.12),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  '${preset.parameters} • ${preset.quant}',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppTheme.cyanAccent,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
                           Text(
-                            preset.sizeMb,
-                            style: const TextStyle(
-                                fontSize: 11, color: AppTheme.textSecondary),
+                            'On-Device GGUF Engine',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Direct POSIX mmap • Hexagon NPU & Adreno GPU • Off-Thread Isolate',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.cyanAccent,
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        preset.description,
-                        style: const TextStyle(
-                            fontSize: 11, color: AppTheme.textSecondary),
+                      IconButton(
+                        icon:
+                            const Icon(Icons.close, color: AppTheme.textMuted),
+                        onPressed: () => Navigator.pop(ctx),
                       ),
-                      const SizedBox(height: 10),
-                      if (isDownloading) ...[
-                        LinearProgressIndicator(
-                          value: preset.downloadProgress > 0
-                              ? preset.downloadProgress
-                              : null,
-                          color: AppTheme.cyanAccent,
-                          backgroundColor: AppTheme.surfaceDark,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Downloading: ${(preset.downloadProgress * 100).toStringAsFixed(1)}%',
-                          style: const TextStyle(
-                              fontSize: 10, color: AppTheme.cyanAccent),
-                        ),
-                      ] else ...[
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            if (isDownloaded || isLoaded) ...[
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: isActive && isLoaded
-                                      ? AppTheme.greenAccent
-                                          .withValues(alpha: 0.2)
-                                      : AppTheme.cyanAccent,
-                                  foregroundColor: isActive && isLoaded
-                                      ? AppTheme.greenAccent
-                                      : Colors.black,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 6),
-                                ),
-                                onPressed: () async {
-                                  await _llmService.loadModel(preset);
-                                  setModalState(() {});
-                                },
-                                child: Text(
-                                  isActive && isLoaded
-                                      ? 'ACTIVE'
-                                      : 'LOAD MODEL',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11),
-                                ),
-                              ),
-                            ] else ...[
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppTheme.surfaceDark,
-                                  foregroundColor: AppTheme.cyanAccent,
-                                  side: const BorderSide(
-                                      color: AppTheme.cyanAccent),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                ),
-                                icon: const Icon(Icons.download, size: 14),
-                                label: const Text('DOWNLOAD GGUF',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11)),
-                                onPressed: () async {
-                                  await _llmService.downloadModel(preset);
-                                  setModalState(() {});
-                                },
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
                     ],
                   ),
-                );
-              }),
-            ],
-          ),
+                  const SizedBox(height: 12),
+
+                  // 2. Storage & Runtime Architecture Pill
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cardDark,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.cardBorder),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.storage,
+                            size: 18, color: AppTheme.amberAccent),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Internal App Documents Sandbox (Scoped Storage Safe)',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Path: /data/user/0/.../app_flutter/ • UFS 4.0 Flash Read (3-4 GB/s) • Zero Storage Permission Prompts • Background Isolate',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppTheme.textSecondary
+                                      .withValues(alpha: 0.85),
+                                ),
+                              ),
+                              if (_llmService.llmStatus.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: const BoxDecoration(
+                                        color: AppTheme.greenAccent,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        _llmService.llmStatus,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppTheme.greenAccent,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 3. Model Cards List
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      children: [
+                        ..._llmService.presets.map((preset) {
+                          final isActive =
+                              _llmService.activePreset?.id == preset.id;
+                          final isLoaded = preset.status == ModelStatus.ready;
+                          final isDownloaded =
+                              preset.status == ModelStatus.downloaded;
+                          final isDownloading =
+                              preset.status == ModelStatus.downloading;
+                          final isLoading =
+                              preset.status == ModelStatus.loading;
+
+                          Color cardBorderColor = AppTheme.cardBorder;
+                          if (isActive && isLoaded) {
+                            cardBorderColor = AppTheme.greenAccent;
+                          } else if (isDownloading) {
+                            cardBorderColor = AppTheme.amberAccent;
+                          } else if (isDownloaded) {
+                            cardBorderColor =
+                                AppTheme.cyanAccent.withValues(alpha: 0.4);
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: AppTheme.cardDark,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: cardBorderColor,
+                                width: (isActive && isLoaded) || isDownloading
+                                    ? 1.5
+                                    : 1,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Title & Spec Badges
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              preset.name,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                                color: AppTheme.textPrimary,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: AppTheme.cyanAccent
+                                                  .withValues(alpha: 0.12),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              '${preset.parameters} • ${preset.quant}',
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: AppTheme.cyanAccent,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // RAM & File Size Tag
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          preset.sizeMb,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppTheme.textPrimary,
+                                          ),
+                                        ),
+                                        Text(
+                                          'RAM: ${preset.ramUsage}',
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            color: AppTheme.textSecondary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+
+                                // Best For & Description
+                                Text(
+                                  preset.bestFor,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+
+                                // Action / Progress Section
+                                if (isDownloading) ...[
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      LinearProgressIndicator(
+                                        value: preset.downloadProgress > 0
+                                            ? preset.downloadProgress
+                                            : null,
+                                        color: AppTheme.amberAccent,
+                                        backgroundColor: AppTheme.surfaceDark,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              preset.downloadStatus ??
+                                                  'Downloading: ${(preset.downloadProgress * 100).toStringAsFixed(1)}%',
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w500,
+                                                color: AppTheme.amberAccent,
+                                              ),
+                                            ),
+                                          ),
+                                          TextButton.icon(
+                                            style: TextButton.styleFrom(
+                                              foregroundColor:
+                                                  AppTheme.redAccent,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 2),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                            icon: const Icon(Icons.cancel,
+                                                size: 14),
+                                            label: const Text('CANCEL',
+                                                style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                            onPressed: () async {
+                                              await _llmService
+                                                  .cancelDownload(preset);
+                                              setModalState(() {});
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ] else if (isLoading) ...[
+                                  const Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppTheme.cyanAccent,
+                                        ),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Loading model weights into Snapdragon RAM...',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: AppTheme.cyanAccent,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ] else ...[
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      // Status Badge
+                                      if (isActive && isLoaded)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.greenAccent
+                                                .withValues(alpha: 0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: const Row(
+                                            children: [
+                                              Icon(Icons.check_circle,
+                                                  size: 12,
+                                                  color: AppTheme.greenAccent),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'ACTIVE ON HARDWARE',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppTheme.greenAccent,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      else if (isDownloaded)
+                                        const Text(
+                                          'Downloaded to Storage',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: AppTheme.textSecondary,
+                                          ),
+                                        )
+                                      else
+                                        const Text(
+                                          'Hugging Face Stream',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: AppTheme.textMuted,
+                                          ),
+                                        ),
+
+                                      // Buttons
+                                      Row(
+                                        children: [
+                                          if (isDownloaded || isLoaded) ...[
+                                            if (isActive && isLoaded) ...[
+                                              OutlinedButton(
+                                                style: OutlinedButton.styleFrom(
+                                                  foregroundColor:
+                                                      AppTheme.amberAccent,
+                                                  side: const BorderSide(
+                                                      color:
+                                                          AppTheme.amberAccent,
+                                                      width: 0.8),
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 6),
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                ),
+                                                onPressed: () async {
+                                                  await _llmService
+                                                      .unloadModel();
+                                                  setModalState(() {});
+                                                },
+                                                child: const Text(
+                                                  'UNLOAD RAM',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 10),
+                                                ),
+                                              ),
+                                            ] else ...[
+                                              ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      AppTheme.cyanAccent,
+                                                  foregroundColor: Colors.black,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 6),
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                ),
+                                                onPressed: () async {
+                                                  await _llmService
+                                                      .loadModel(preset);
+                                                  setModalState(() {});
+                                                },
+                                                child: const Text(
+                                                  'LOAD MODEL',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 10),
+                                                ),
+                                              ),
+                                            ],
+                                            const SizedBox(width: 6),
+                                            IconButton(
+                                              icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  size: 18,
+                                                  color: AppTheme.redAccent),
+                                              tooltip:
+                                                  'Delete GGUF file from phone',
+                                              onPressed: () async {
+                                                await _llmService
+                                                    .deleteModel(preset);
+                                                setModalState(() {});
+                                              },
+                                            ),
+                                          ] else ...[
+                                            ElevatedButton.icon(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor:
+                                                    AppTheme.surfaceDark,
+                                                foregroundColor:
+                                                    AppTheme.cyanAccent,
+                                                side: const BorderSide(
+                                                    color: AppTheme.cyanAccent),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 6),
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                              ),
+                                              icon: const Icon(Icons.download,
+                                                  size: 13),
+                                              label: const Text('DOWNLOAD GGUF',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 10)),
+                                              onPressed: () async {
+                                                await _llmService
+                                                    .downloadModel(preset);
+                                                setModalState(() {});
+                                              },
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+
+                  // 4. Custom Model Actions Bar
+                  const Divider(color: AppTheme.cardBorder, height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.cyanAccent,
+                            side: const BorderSide(color: AppTheme.cyanAccent),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: const Icon(Icons.link, size: 16),
+                          label: const Text('Custom GGUF URL',
+                              style: TextStyle(
+                                  fontSize: 11, fontWeight: FontWeight.bold)),
+                          onPressed: () {
+                            _showCustomUrlDialog(context);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.cardSurface,
+                            foregroundColor: AppTheme.textPrimary,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side:
+                                  const BorderSide(color: AppTheme.cardBorder),
+                            ),
+                          ),
+                          icon: const Icon(Icons.folder_open,
+                              size: 16, color: AppTheme.amberAccent),
+                          label: const Text('Pick Local .gguf',
+                              style: TextStyle(
+                                  fontSize: 11, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _llmService.pickAndLoadLocalModel();
+                            setModalState(() {});
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showCustomUrlDialog(BuildContext parentContext) {
+    final urlController = TextEditingController();
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: parentContext,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppTheme.cardDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppTheme.cardBorder),
         ),
+        title: const Row(
+          children: [
+            Icon(Icons.downloading, color: AppTheme.cyanAccent, size: 20),
+            SizedBox(width: 8),
+            Text('Custom GGUF Download',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Stream any GGUF quantized model directly into the internal app sandbox:',
+              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Model Name',
+                hintText: 'e.g. DeepSeek-R1-Distill-1.5B',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: 'Direct GGUF URL',
+                hintText: 'https://huggingface.co/.../resolve/main/...gguf',
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('CANCEL',
+                style: TextStyle(color: AppTheme.textMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.cyanAccent,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () {
+              final url = urlController.text.trim();
+              final name = nameController.text.trim();
+              if (url.isNotEmpty) {
+                Navigator.pop(dialogCtx);
+                _llmService.addCustomModelFromUrl(url, name);
+              }
+            },
+            child: const Text('STREAM & RUN',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
@@ -425,6 +867,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
   Widget _buildTelemetryBar() {
     final active = _llmService.activePreset;
+    final isDownloading = _llmService.downloadingPreset != null;
+    final downloading = _llmService.downloadingPreset;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: AppTheme.surfaceDark,
@@ -438,45 +883,90 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     size: 16, color: AppTheme.cyanAccent),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    active != null
-                        ? '${active.name} (${active.quant})'
-                        : 'No Model Loaded',
-                    overflow: TextOverflow.ellipsis,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        active != null
+                            ? '${active.name} (${active.quant})'
+                            : 'No Model Loaded',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        _llmService.acceleratorName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isDownloading && downloading != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.amberAccent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: AppTheme.amberAccent.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 10,
+                    height: 10,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: AppTheme.amberAccent),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${(downloading.downloadProgress * 100).toStringAsFixed(0)}% (${downloading.downloadSpeedMbps.toStringAsFixed(1)} MB/s)',
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
+                      color: AppTheme.amberAccent,
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppTheme.greenAccent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.flash_on,
-                    size: 12, color: AppTheme.greenAccent),
-                const SizedBox(width: 4),
-                Text(
-                  _llmService.isGenerating
-                      ? '${_llmService.currentTps.toStringAsFixed(1)} tok/s'
-                      : 'GPU Accel ON',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.greenAccent,
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.greenAccent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.flash_on,
+                      size: 12, color: AppTheme.greenAccent),
+                  const SizedBox(width: 4),
+                  Text(
+                    _llmService.isGenerating
+                        ? '${_llmService.currentTps.toStringAsFixed(1)} tok/s'
+                        : 'Hexagon NPU / GPU ON',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.greenAccent,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

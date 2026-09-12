@@ -9,6 +9,9 @@ class Deadline {
   final DateTime dueDate;
   final TaskPriority priority;
   bool isCompleted;
+  final bool isSpokenDetected;
+  final String? audioTimestamp;
+  final String? sourceLocation;
 
   Deadline({
     required this.id,
@@ -17,6 +20,9 @@ class Deadline {
     required this.dueDate,
     this.priority = TaskPriority.medium,
     this.isCompleted = false,
+    this.isSpokenDetected = false,
+    this.audioTimestamp,
+    this.sourceLocation,
   });
 
   Duration get timeLeft => dueDate.difference(DateTime.now());
@@ -25,8 +31,9 @@ class Deadline {
     final diff = timeLeft;
     if (diff.isNegative) return 'Overdue';
     if (diff.inDays > 0) return '${diff.inDays}d ${diff.inHours % 24}h left';
-    if (diff.inHours > 0)
+    if (diff.inHours > 0) {
       return '${diff.inHours}h ${diff.inMinutes % 60}m left';
+    }
     return '${diff.inMinutes}m left';
   }
 
@@ -38,6 +45,9 @@ class Deadline {
       'dueDate': dueDate.toIso8601String(),
       'priority': priority.name,
       'isCompleted': isCompleted,
+      'isSpokenDetected': isSpokenDetected,
+      'audioTimestamp': audioTimestamp,
+      'sourceLocation': sourceLocation,
     };
   }
 
@@ -52,6 +62,9 @@ class Deadline {
         orElse: () => TaskPriority.medium,
       ),
       isCompleted: map['isCompleted'] as bool? ?? false,
+      isSpokenDetected: map['isSpokenDetected'] as bool? ?? false,
+      audioTimestamp: map['audioTimestamp'] as String?,
+      sourceLocation: map['sourceLocation'] as String?,
     );
   }
 

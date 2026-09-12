@@ -27,6 +27,9 @@ class DeadlineService extends ChangeNotifier {
         course: 'Operating Systems',
         dueDate: now.add(const Duration(days: 2, hours: 4)),
         priority: TaskPriority.high,
+        isSpokenDetected: true,
+        audioTimestamp: '18:40',
+        sourceLocation: 'Lecture 3 Audio',
       ),
       Deadline(
         id: 'dl-2',
@@ -34,6 +37,7 @@ class DeadlineService extends ChangeNotifier {
         course: 'Engineering Physics',
         dueDate: now.add(const Duration(days: 4, hours: 8)),
         priority: TaskPriority.medium,
+        isSpokenDetected: false,
       ),
       Deadline(
         id: 'dl-3',
@@ -41,6 +45,9 @@ class DeadlineService extends ChangeNotifier {
         course: 'Mathematics',
         dueDate: now.add(const Duration(days: 6)),
         priority: TaskPriority.low,
+        isSpokenDetected: true,
+        audioTimestamp: '32:15',
+        sourceLocation: 'Lecture 5 Audio',
       ),
       Deadline(
         id: 'dl-4',
@@ -49,6 +56,7 @@ class DeadlineService extends ChangeNotifier {
         dueDate: now.subtract(const Duration(days: 1)),
         priority: TaskPriority.medium,
         isCompleted: true,
+        isSpokenDetected: false,
       ),
     ]);
     notifyListeners();

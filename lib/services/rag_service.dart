@@ -24,6 +24,71 @@ class RagService extends ChangeNotifier {
     _populateSeedData();
   }
 
+  void addSubject(String subjectName,
+      {String iconCode = 'school', List<String>? initialUnits}) {
+    final cleanName = subjectName.trim();
+    if (cleanName.isEmpty) return;
+
+    final existing = _subjects.any(
+      (s) => s.name.toLowerCase() == cleanName.toLowerCase(),
+    );
+    if (existing) return;
+
+    final units = <VaultUnit>[];
+    if (initialUnits != null && initialUnits.isNotEmpty) {
+      for (var i = 0; i < initialUnits.length; i++) {
+        final uName = initialUnits[i].trim();
+        if (uName.isNotEmpty) {
+          units.add(VaultUnit(
+            id: 'unit_${DateTime.now().millisecondsSinceEpoch}_$i',
+            name: uName,
+            subjectName: cleanName,
+          ));
+        }
+      }
+    } else {
+      units.add(VaultUnit(
+        id: 'unit_${DateTime.now().millisecondsSinceEpoch}',
+        name: 'Unit 1: Introduction & Fundamentals',
+        subjectName: cleanName,
+      ));
+    }
+
+    _subjects.add(VaultSubject(
+      name: cleanName,
+      iconCode: iconCode,
+      units: units,
+    ));
+    notifyListeners();
+  }
+
+  void addUnit(String subjectName, String unitName) {
+    final cleanUnit = unitName.trim();
+    if (cleanUnit.isEmpty) return;
+
+    final subject = _subjects.firstWhere(
+      (s) => s.name.toLowerCase() == subjectName.trim().toLowerCase(),
+      orElse: () {
+        final newSub =
+            VaultSubject(name: subjectName.trim(), iconCode: 'school');
+        _subjects.add(newSub);
+        return newSub;
+      },
+    );
+
+    final exists = subject.units.any(
+      (u) => u.name.toLowerCase() == cleanUnit.toLowerCase(),
+    );
+    if (!exists) {
+      subject.units.add(VaultUnit(
+        id: 'unit_${DateTime.now().millisecondsSinceEpoch}',
+        name: cleanUnit,
+        subjectName: subject.name,
+      ));
+      notifyListeners();
+    }
+  }
+
   void _populateSeedData() {
     // Seed Subject 1: Operating Systems
     final osUnit1 = VaultUnit(

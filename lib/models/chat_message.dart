@@ -7,6 +7,8 @@ class AcademicChatMessage {
   final DateTime timestamp;
   double? tokensPerSecond;
   final List<ChunkMatch> citations;
+  final String? audioCitation;
+  final String? evidenceSnippet;
   bool isGenerating;
 
   AcademicChatMessage({
@@ -16,6 +18,8 @@ class AcademicChatMessage {
     required this.timestamp,
     this.tokensPerSecond,
     this.citations = const [],
+    this.audioCitation,
+    this.evidenceSnippet,
     this.isGenerating = false,
   });
 
