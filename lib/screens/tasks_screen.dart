@@ -14,7 +14,8 @@ class TasksScreen extends StatefulWidget {
 
 class _TasksScreenState extends State<TasksScreen> {
   final DeadlineService _deadlineService = DeadlineService.instance;
-  int _selectedFilterIndex = 0; // 0: All, 1: Spoken Detected, 2: Manual, 3: Done
+  int _selectedFilterIndex =
+      0; // 0: All, 1: Spoken Detected, 2: Manual, 3: Done
 
   final List<String> _filters = ['All', '🎙️ Detected', '✍️ Manual', 'Done'];
 
@@ -49,10 +50,37 @@ class _TasksScreenState extends State<TasksScreen> {
     }
   }
 
+  String _formatDateShort(DateTime dt) {
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${weekdays[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}';
+  }
+
+  String _formatTimeShort(TimeOfDay t) {
+    final hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final minute = t.minute.toString().padLeft(2, '0');
+    final period = t.period == DayPeriod.am ? 'AM' : 'PM';
+    return '$hour:$minute $period';
+  }
+
   void _showAddTaskDialog() {
     final titleCtrl = TextEditingController();
     final courseCtrl = TextEditingController(text: 'Operating Systems');
-    int daysFromNow = 2;
+    DateTime selectedDate = DateTime.now().add(const Duration(days: 2));
+    TimeOfDay selectedTime = const TimeOfDay(hour: 23, minute: 59);
 
     showModalBottomSheet(
       context: context,
@@ -93,6 +121,15 @@ class _TasksScreenState extends State<TasksScreen> {
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(color: AppTheme.cardBorder),
                   ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                        color: AppTheme.primaryAccent, width: 1.5),
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -106,45 +143,244 @@ class _TasksScreenState extends State<TasksScreen> {
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(color: AppTheme.cardBorder),
                   ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                        color: AppTheme.primaryAccent, width: 1.5),
+                  ),
                 ),
               ),
               const SizedBox(height: 14),
+
+              // Date & Time Picker Row
               Row(
                 children: [
-                  const Text('Due in:',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.textSecondary)),
-                  const SizedBox(width: 10),
-                  ...[1, 2, 5, 7].map((days) {
-                    final isSel = daysFromNow == days;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text('${days}d'),
-                        selected: isSel,
-                        selectedColor: AppTheme.primaryAccent,
-                        labelStyle: TextStyle(
-                          color: isSel ? Colors.white : AppTheme.textPrimary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12,
+                  // Date Picker Tile
+                  Expanded(
+                    flex: 3,
+                    child: InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate,
+                          firstDate:
+                              DateTime.now().subtract(const Duration(days: 1)),
+                          lastDate:
+                              DateTime.now().add(const Duration(days: 365 * 2)),
+                          builder: (context, child) {
+                            return Theme(
+                              data: Theme.of(context).copyWith(
+                                colorScheme: const ColorScheme.light(
+                                  primary: AppTheme.primaryAccent,
+                                  onPrimary: Colors.white,
+                                  surface: AppTheme.cardSurface,
+                                  onSurface: AppTheme.textPrimary,
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
+                        );
+                        if (picked != null) {
+                          setModalState(() => selectedDate = picked);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.neutralPillFill,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.cardBorder),
                         ),
-                        onSelected: (val) {
-                          if (val) setModalState(() => daysFromNow = days);
-                        },
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today,
+                                size: 16, color: AppTheme.primaryAccent),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Due Date',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    _formatDateShort(selectedDate),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    );
-                  }),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+
+                  // Time Picker Tile
+                  Expanded(
+                    flex: 2,
+                    child: InkWell(
+                      onTap: () async {
+                        final picked = await showTimePicker(
+                          context: context,
+                          initialTime: selectedTime,
+                          builder: (context, child) {
+                            return Theme(
+                              data: Theme.of(context).copyWith(
+                                colorScheme: const ColorScheme.light(
+                                  primary: AppTheme.primaryAccent,
+                                  onPrimary: Colors.white,
+                                  surface: AppTheme.cardSurface,
+                                  onSurface: AppTheme.textPrimary,
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
+                        );
+                        if (picked != null) {
+                          setModalState(() => selectedTime = picked);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.neutralPillFill,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.cardBorder),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.access_time,
+                                size: 16, color: AppTheme.primaryAccent),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Due Time',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    _formatTimeShort(selectedTime),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+
+              // Quick Presets Row (Days Chips)
+              Row(
+                children: [
+                  const Text(
+                    'Quick Presets:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [1, 2, 3, 5, 7].map((days) {
+                          final targetDate =
+                              DateTime.now().add(Duration(days: days));
+                          final isSel = selectedDate.year == targetDate.year &&
+                              selectedDate.month == targetDate.month &&
+                              selectedDate.day == targetDate.day;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              label: Text('+${days}d'),
+                              selected: isSel,
+                              selectedColor: AppTheme.primaryAccent,
+                              backgroundColor: AppTheme.neutralPillFill,
+                              side: BorderSide(
+                                color: isSel
+                                    ? AppTheme.primaryAccent
+                                    : AppTheme.cardBorder,
+                              ),
+                              labelStyle: TextStyle(
+                                color:
+                                    isSel ? Colors.white : AppTheme.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11,
+                              ),
+                              onSelected: (val) {
+                                if (val) {
+                                  setModalState(() {
+                                    selectedDate = DateTime.now()
+                                        .add(Duration(days: days));
+                                  });
+                                }
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
                   onPressed: () {
                     final title = titleCtrl.text.trim();
                     if (title.isEmpty) return;
+                    final finalDueDate = DateTime(
+                      selectedDate.year,
+                      selectedDate.month,
+                      selectedDate.day,
+                      selectedTime.hour,
+                      selectedTime.minute,
+                    );
                     _deadlineService.addDeadline(
                       Deadline(
                         id: 'dl_${DateTime.now().millisecondsSinceEpoch}',
@@ -152,8 +388,7 @@ class _TasksScreenState extends State<TasksScreen> {
                         course: courseCtrl.text.trim().isNotEmpty
                             ? courseCtrl.text.trim()
                             : 'General',
-                        dueDate:
-                            DateTime.now().add(Duration(days: daysFromNow)),
+                        dueDate: finalDueDate,
                         isSpokenDetected: false,
                       ),
                     );
@@ -167,8 +402,8 @@ class _TasksScreenState extends State<TasksScreen> {
                     ),
                   ),
                   child: const Text('Save Task',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700)),
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 ),
               ),
             ],
@@ -361,8 +596,7 @@ class _TasksScreenState extends State<TasksScreen> {
                       ),
                     ),
                     child: task.isCompleted
-                        ? const Icon(Icons.check,
-                            size: 14, color: Colors.white)
+                        ? const Icon(Icons.check, size: 14, color: Colors.white)
                         : null,
                   ),
                 ),
@@ -447,7 +681,8 @@ class _TasksScreenState extends State<TasksScreen> {
                     ),
                     InkWell(
                       onTap: () {
-                        widget.onNavigateToTab?.call(1); // Jump to Voice capture
+                        widget.onNavigateToTab
+                            ?.call(1); // Jump to Voice capture
                       },
                       child: const Text(
                         'Jump to audio timestamp →',
