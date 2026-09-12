@@ -234,10 +234,39 @@ class TimetableService extends ChangeNotifier {
     await _saveToDisk();
   }
 
-  Future<void> addEntries(List<TimetableEntry> newEntries) async {
+  Future<void> addEntries(List<TimetableEntry> newEntries,
+      {bool saveToDisk = true}) async {
     _entries.addAll(newEntries);
     notifyListeners();
-    await _saveToDisk();
+    if (saveToDisk) {
+      await _saveToDisk();
+    }
+  }
+
+  Future<void> replaceEntries(List<TimetableEntry> newEntries,
+      {bool saveToDisk = true}) async {
+    _entries.clear();
+    _entries.addAll(newEntries);
+    notifyListeners();
+    if (saveToDisk) {
+      await _saveToDisk();
+    }
+  }
+
+  /// Counts how many classes in [candidates] match existing classes by day, time, and subject.
+  int findDuplicateCount(List<TimetableEntry> candidates) {
+    int count = 0;
+    for (final candidate in candidates) {
+      final isDuplicate = _entries.any((existing) =>
+          _normalizeDay(existing.dayOfWeek) ==
+              _normalizeDay(candidate.dayOfWeek) &&
+          existing.startTime.trim().toUpperCase() ==
+              candidate.startTime.trim().toUpperCase() &&
+          existing.subject.trim().toLowerCase() ==
+              candidate.subject.trim().toLowerCase());
+      if (isDuplicate) count++;
+    }
+    return count;
   }
 
   Future<void> updateEntry(TimetableEntry updated) async {

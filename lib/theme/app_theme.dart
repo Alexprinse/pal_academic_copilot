@@ -11,6 +11,7 @@ class AppTheme {
   static const Color textInactive = Color(0xFF9C9686);
 
   static const Color primaryAccent = Color(0xFFB88628);
+  static const Color primaryButtonText = Color(0xFFFFFFFF);
   static const Color darkSurface = Color(0xFF1E1D19);
 
   // Semantic Pill Tokens

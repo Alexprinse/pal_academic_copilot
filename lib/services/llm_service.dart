@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import '../models/chat_message.dart';
 import '../models/llm_model_preset.dart';
 
 class LlmService extends ChangeNotifier {
@@ -467,6 +468,7 @@ class LlmService extends ChangeNotifier {
     required String prompt,
     String? systemPrompt,
     int maxTokens = 512,
+    List<AcademicChatMessage>? conversationHistory,
   }) async* {
     _isGenerating = true;
     _currentTps = 0.0;
@@ -481,6 +483,20 @@ class LlmService extends ChangeNotifier {
         if (systemPrompt != null && systemPrompt.isNotEmpty) {
           _chat!.addSystem(systemPrompt);
         }
+
+        // Replay previous conversation turns so model remembers dialogue context
+        if (conversationHistory != null && conversationHistory.isNotEmpty) {
+          for (final msg in conversationHistory) {
+            final content = msg.text.trim();
+            if (content.isEmpty) continue;
+            if (msg.isUser) {
+              _chat!.addUser(content);
+            } else if (msg.isAssistant && !msg.isGenerating) {
+              _chat!.addAssistant(content);
+            }
+          }
+        }
+
         _chat!.addUser(prompt);
 
         final stream = _chat!.generate(maxTokens: maxTokens);

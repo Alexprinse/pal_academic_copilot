@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import '../models/lecture_recording.dart';
+import 'audio_noise_processor.dart';
 
 class WavAudioMetadata {
   final bool isValid;
@@ -47,6 +48,14 @@ class SttService extends ChangeNotifier {
 
   String? _recordingPath;
   String? get recordingPath => _recordingPath;
+
+  bool _isAudioDspEnabled = true;
+  bool get isAudioDspEnabled => _isAudioDspEnabled;
+
+  void setAudioDspEnabled(bool enabled) {
+    _isAudioDspEnabled = enabled;
+    notifyListeners();
+  }
 
   Future<void> init() async {
     if (_isInitialized) return;
@@ -230,10 +239,14 @@ class SttService extends ChangeNotifier {
     }
 
     // Must record in 16kHz mono WAV as required by Whisper ONNX
+    // Hardware noise suppression & AGC enabled if supported by the Android device
     const config = RecordConfig(
       encoder: AudioEncoder.wav,
       sampleRate: 16000,
       numChannels: 1,
+      autoGain: true,
+      noiseSuppress: true,
+      echoCancel: true,
     );
 
     debugPrint('[RECORD] Starting audio recording -> $filePath');
@@ -308,7 +321,27 @@ class SttService extends ChangeNotifier {
       }
 
       final int sampleRate = wave.sampleRate;
-      final Float32List allSamples = wave.samples;
+      Float32List allSamples = wave.samples;
+
+      // On-device audio preprocessing pipeline (temporary waveform for Whisper)
+      if (_isAudioDspEnabled) {
+        try {
+          debugPrint('[STT] Preprocessing audio with on-device DSP...');
+          allSamples = AudioNoiseProcessor.process(
+            allSamples,
+            sampleRate: sampleRate,
+            verbose: true,
+          );
+          debugPrint('[STT] Using processed waveform for Whisper recognition.');
+        } catch (e) {
+          debugPrint(
+              '[AUDIO DSP] Processing failed — falling back to original waveform: $e');
+          allSamples = wave.samples;
+        }
+      } else {
+        debugPrint(
+            '[STT] Audio DSP disabled (A/B testing mode) — using raw waveform.');
+      }
 
       // 25-second chunking
       final int maxChunkSamples = sampleRate * 25;
@@ -386,7 +419,27 @@ class SttService extends ChangeNotifier {
       }
 
       final int sampleRate = wave.sampleRate;
-      final Float32List allSamples = wave.samples;
+      Float32List allSamples = wave.samples;
+
+      // On-device audio preprocessing pipeline (temporary waveform for Whisper)
+      if (_isAudioDspEnabled) {
+        try {
+          debugPrint('[STT] Preprocessing audio with on-device DSP...');
+          allSamples = AudioNoiseProcessor.process(
+            allSamples,
+            sampleRate: sampleRate,
+            verbose: true,
+          );
+          debugPrint('[STT] Using processed waveform for Whisper recognition.');
+        } catch (e) {
+          debugPrint(
+              '[AUDIO DSP] Processing failed — falling back to original waveform: $e');
+          allSamples = wave.samples;
+        }
+      } else {
+        debugPrint(
+            '[STT] Audio DSP disabled (A/B testing mode) — using raw waveform.');
+      }
 
       // 25-second chunking
       final int maxChunkSamples = sampleRate * 25;

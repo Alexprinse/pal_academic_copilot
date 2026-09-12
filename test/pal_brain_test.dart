@@ -4,10 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pal_academic_copilot/models/chat_message.dart';
 import 'package:pal_academic_copilot/models/vault_item.dart';
 import 'package:pal_academic_copilot/screens/pal_brain_screen.dart';
+import 'package:pal_academic_copilot/services/conversation_service.dart';
 
 void main() {
   group('Ask Screen (Pal Brain) Redesign & Markdown Rendering Tests', () {
-    testWidgets('Renders ChatGPT-style assistant messages with Markdown and Action Row',
+    setUp(() {
+      ConversationService.instance.clearForTesting();
+    });
+
+    testWidgets(
+        'Renders ChatGPT-style assistant messages with Markdown and Action Row',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 2.0;
@@ -39,7 +45,8 @@ void main() {
         AcademicChatMessage(
           id: 'msg-test-1',
           role: 'assistant',
-          text: '## Key Concepts\n- **Deadlock** occurs when processes are blocked.\n- *Preemption* avoids resource hold.',
+          text:
+              '## Key Concepts\n- **Deadlock** occurs when processes are blocked.\n- *Preemption* avoids resource hold.',
           timestamp: DateTime.now(),
           tokensPerSecond: 18.5,
           citations: [
@@ -50,7 +57,8 @@ void main() {
                 unit: 'Unit 1',
                 documentName: 'OS Notes Unit 1.pdf',
                 pageNumber: 3,
-                text: 'Deadlock happens when four conditions hold simultaneously.',
+                text:
+                    'Deadlock happens when four conditions hold simultaneously.',
                 wordCount: 8,
               ),
               score: 0.92,
@@ -76,7 +84,8 @@ void main() {
       await tester.tap(chipFinder);
       await tester.pumpAndSettle();
       expect(find.text('VERIFIED SOURCE EXCERPT'), findsOneWidget);
-      expect(find.textContaining('Deadlock happens when four conditions hold'), findsOneWidget);
+      expect(find.textContaining('Deadlock happens when four conditions hold'),
+          findsOneWidget);
 
       // Close modal (tap outside modal or back)
       Navigator.pop(tester.element(find.text('VERIFIED SOURCE EXCERPT')));

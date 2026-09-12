@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import '../models/vault_item.dart';
 import '../services/rag_service.dart';
 import '../theme/app_theme.dart';
+import 'ocr_document_review_screen.dart';
 
 class StudyVaultScreen extends StatefulWidget {
   final Function(int,
@@ -46,72 +47,186 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
       final name = result.files.single.name;
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppTheme.cardSurface,
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: AppTheme.primaryAccent),
+
+      int currentPage = 1;
+      int totalPages = 1;
+      String statusMessage = 'Analyzing document structure...';
+      void Function(void Function())? updateDialogState;
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            updateDialogState = setDialogState;
+            final progress = totalPages > 0
+                ? (currentPage / totalPages).clamp(0.0, 1.0)
+                : 0.0;
+            return AlertDialog(
+              backgroundColor: AppTheme.cardSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.cardBorder),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Indexing "$name" on-device...',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 13,
+              title: Row(
+                children: [
+                  const Icon(Icons.document_scanner,
+                      color: AppTheme.primaryAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Indexing "$name"',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(
+                    value: progress,
+                    backgroundColor: AppTheme.neutralPillFill,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppTheme.primaryAccent),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Page $currentPage of $totalPages',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        '${(progress * 100).toInt()}%',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    statusMessage,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Row(
+                    children: [
+                      Icon(Icons.security,
+                          size: 12, color: AppTheme.trustPillText),
+                      SizedBox(width: 4),
+                      Text(
+                        '100% On-Device • Zero Cloud Calls',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.trustPillText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       );
 
-      final doc = await _ragService.indexPdfFile(
-        filePath: path,
-        fileName: name,
-        subjectName: subjectName,
-        unitName: unitName,
-      );
+      try {
+        final doc = await _ragService.indexHybridPdfFile(
+          filePath: path,
+          fileName: name,
+          subjectName: subjectName,
+          unitName: unitName,
+          onProgress: (cur, tot, status) {
+            currentPage = cur;
+            totalPages = tot;
+            statusMessage = status;
+            updateDialogState?.call(() {});
+          },
+        );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppTheme.cardSurface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: const BorderSide(color: AppTheme.cardBorder),
-            ),
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle,
-                    color: AppTheme.trustPillText, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Indexed ${doc.chunkCount} chunks across ${doc.pageCount} pages in $unitName!',
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontWeight: FontWeight.w600,
+        if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppTheme.cardSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: AppTheme.cardBorder),
+              ),
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle,
+                      color: AppTheme.trustPillText, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Indexed ${doc.chunkCount} chunks across ${doc.pageCount} pages (${doc.ocrPageCount} OCR)!',
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
+              action: SnackBarAction(
+                label: 'Review OCR',
+                textColor: AppTheme.primaryAccent,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => OcrDocumentReviewScreen(
+                        document: doc,
+                        onNavigateToBrain: widget.onNavigateToBrain,
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
-        );
+          );
+        }
+      } catch (e) {
+        if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.red.shade900,
+              content: Text('Failed to index PDF: $e'),
+            ),
+          );
+        }
       }
     }
   }
 
   void _showAddSubjectDialog() {
     final subjectCtrl = TextEditingController();
-    final unitCtrl = TextEditingController(text: 'Unit 1: Introduction & Fundamentals');
+    final unitCtrl =
+        TextEditingController(text: 'Unit 1: Introduction & Fundamentals');
 
     showModalBottomSheet(
       context: context,
@@ -396,7 +511,8 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.add, size: 14, color: AppTheme.detectedPillText),
+                      Icon(Icons.add,
+                          size: 14, color: AppTheme.detectedPillText),
                       SizedBox(width: 4),
                       Text(
                         'Add Subject',
@@ -488,7 +604,8 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
             style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
           ),
           trailing: IconButton(
-            icon: const Icon(Icons.add, size: 20, color: AppTheme.primaryAccent),
+            icon:
+                const Icon(Icons.add, size: 20, color: AppTheme.primaryAccent),
             tooltip: 'Add Unit',
             onPressed: () => _showAddUnitDialog(subject.name),
           ),
@@ -497,8 +614,7 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
               padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12),
               child: Column(
                 children: [
-                  ...subject.units
-                      .map((unit) => _buildUnitItem(subject, unit)),
+                  ...subject.units.map((unit) => _buildUnitItem(subject, unit)),
                   const SizedBox(height: 6),
                   TextButton.icon(
                     onPressed: () => _showAddUnitDialog(subject.name),
@@ -560,7 +676,12 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
             '${unit.documents.length} PDF Notes uploaded (${unit.totalChunks} Chunks indexed)',
             style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
           ),
-          const SizedBox(height: 10),
+          if (unit.documents.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...unit.documents
+                .map((doc) => _buildDocumentItem(subject, unit, doc)),
+          ],
+          const SizedBox(height: 12),
           // Quick Action Chips
           Wrap(
             spacing: 8,
@@ -595,6 +716,102 @@ class _StudyVaultScreenState extends State<StudyVaultScreen> {
                 },
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentItem(
+      VaultSubject subject, VaultUnit unit, VaultDocument doc) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.cardSurface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.cardBorder.withValues(alpha: 0.7)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: doc.hasOcr
+                  ? AppTheme.trustPillFill
+                  : AppTheme.detectedPillFill,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              doc.hasOcr ? Icons.document_scanner : Icons.picture_as_pdf,
+              size: 16,
+              color: doc.hasOcr
+                  ? AppTheme.trustPillText
+                  : AppTheme.detectedPillText,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  doc.name,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Text(
+                      '${doc.pageCount} pages • ${doc.chunkCount} chunks',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    if (doc.hasOcr) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppTheme.trustPillFill,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'OCR (${doc.ocrPageCount}p)',
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.trustPillText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_note,
+                size: 20, color: AppTheme.primaryAccent),
+            tooltip: 'Review & Edit OCR Text',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => OcrDocumentReviewScreen(
+                    document: doc,
+                    onNavigateToBrain: widget.onNavigateToBrain,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),

@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/chat_message.dart';
+import '../models/conversation_session.dart';
 import '../models/llm_model_preset.dart';
 import '../models/vault_item.dart';
+import '../services/conversation_service.dart';
 import '../services/llm_service.dart';
 import '../services/rag_service.dart';
 import '../services/stt_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/chat_history_drawer.dart';
 
 class PalBrainScreen extends StatefulWidget {
   final String? initialQuery;
@@ -29,6 +32,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   final LlmService _llmService = LlmService.instance;
   final RagService _ragService = RagService.instance;
   final SttService _sttService = SttService.instance;
+  final ConversationService _conversationService = ConversationService.instance;
+
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  ConversationSession? _activeSession;
 
   final List<AcademicChatMessage> _messages = [];
   final TextEditingController _inputController = TextEditingController();
@@ -45,6 +52,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     super.initState();
     _llmService.addListener(_onLlmUpdate);
     _sttService.addListener(_onSttUpdate);
+    _conversationService.addListener(_onConversationServiceUpdate);
 
     if (widget.initialFilterSubject != null ||
         widget.initialFilterUnit != null) {
@@ -53,16 +61,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
           'All Notes';
     }
 
-    // Seed welcome message
-    _messages.add(
-      AcademicChatMessage(
-        id: 'msg-welcome',
-        role: 'assistant',
-        text:
-            'Hello! I am Pal, your on-device multimodal academic copilot running locally on your Snapdragon 8 Elite hardware. Ask me anything, or query your Study Vault with RAG citations!',
-        timestamp: DateTime.now(),
-      ),
-    );
+    _initActiveSession();
 
     if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -72,10 +71,58 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     }
   }
 
+  void _initActiveSession() {
+    final active = _conversationService.activeConversation;
+    if (active != null) {
+      _activeSession = active;
+      _selectedRagScope = active.selectedRagScope;
+      _messages.clear();
+      _messages.addAll(active.messages);
+    } else {
+      final now = DateTime.now();
+      final convId = 'conv_${now.millisecondsSinceEpoch}';
+      final welcomeMsg = AcademicChatMessage(
+        id: 'msg-welcome',
+        conversationId: convId,
+        role: 'assistant',
+        text:
+            "Hi, I'm **Pal** — your personal academic copilot for lectures, notes, and textbooks.\n\nAsk me anything, or tap a suggestion below to begin studying.",
+        timestamp: now,
+      );
+      _activeSession = ConversationSession(
+        id: convId,
+        title: 'New Chat',
+        createdAt: now,
+        updatedAt: now,
+        selectedRagScope: _selectedRagScope,
+        messages: [welcomeMsg],
+      );
+      _messages.clear();
+      _messages.add(welcomeMsg);
+      _conversationService.saveConversation(_activeSession!);
+    }
+  }
+
+  void _onConversationServiceUpdate() {
+    if (!mounted) return;
+    final currentActive = _conversationService.activeConversation;
+    if (currentActive == null) {
+      _initActiveSession();
+      setState(() {});
+    } else if (_activeSession != null &&
+        !_conversationService.conversations
+            .any((c) => c.id == _activeSession!.id)) {
+      _selectConversation(currentActive);
+    } else {
+      setState(() {});
+    }
+  }
+
   @override
   void dispose() {
     _llmService.removeListener(_onLlmUpdate);
     _sttService.removeListener(_onSttUpdate);
+    _conversationService.removeListener(_onConversationServiceUpdate);
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -128,6 +175,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   void setQuery(String query, {String? ragScope}) {
     if (ragScope != null) {
       setState(() => _selectedRagScope = ragScope);
+      if (_activeSession != null) {
+        _activeSession!.selectedRagScope = ragScope;
+        _conversationService.saveConversation(_activeSession!);
+      }
     }
     _inputController.text = query;
     _sendMessage();
@@ -137,12 +188,123 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   void addMessageForTesting(AcademicChatMessage message) {
     setState(() {
       _messages.add(message);
+      _activeSession?.messages.add(message);
     });
   }
 
   @visibleForTesting
+  ConversationSession? get activeSessionForTesting => _activeSession;
+
+  @visibleForTesting
   void showModelSwitcherForTesting() {
     _showModelSwitcherModal();
+  }
+
+  Future<void> _promptOrStartNewChat() async {
+    if (_llmService.isGenerating) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait for current response to finish.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final hasUserMessages = _messages.any((m) => m.isUser);
+    if (!hasUserMessages) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: AppTheme.cardBorder),
+        ),
+        title: const Text(
+          'Start a new chat?',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+        content: const Text(
+          'Your current conversation will be safely saved in Chat History.',
+          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryAccent,
+              foregroundColor: AppTheme.primaryButtonText,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('New Chat'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _startNewChat();
+    }
+  }
+
+  Future<void> _startNewChat() async {
+    if (_activeSession != null) {
+      _activeSession!.messages.clear();
+      _activeSession!.messages.addAll(_messages);
+      _activeSession!.selectedRagScope = _selectedRagScope;
+      await _conversationService.saveConversation(_activeSession!);
+    }
+
+    final newSession = await _conversationService.createConversation(
+      initialRagScope: _selectedRagScope,
+    );
+
+    setState(() {
+      _activeSession = newSession;
+      _messages.clear();
+      _messages.addAll(newSession.messages);
+      _selectedRagScope = newSession.selectedRagScope;
+      _inputController.clear();
+    });
+  }
+
+  Future<void> _selectConversation(ConversationSession conversation) async {
+    if (_activeSession?.id == conversation.id) return;
+
+    if (_activeSession != null) {
+      _activeSession!.messages.clear();
+      _activeSession!.messages.addAll(_messages);
+      _activeSession!.selectedRagScope = _selectedRagScope;
+      await _conversationService.saveConversation(_activeSession!);
+    }
+
+    await _conversationService.setActiveConversation(conversation.id);
+
+    setState(() {
+      _activeSession = conversation;
+      _messages.clear();
+      _messages.addAll(conversation.messages);
+      _selectedRagScope = conversation.selectedRagScope;
+      _inputController.clear();
+    });
+
+    _scrollToBottom();
   }
 
   Future<void> _sendMessage() async {
@@ -151,14 +313,30 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
     _inputController.clear();
 
+    _activeSession ??= await _conversationService.createConversation(
+      initialRagScope: _selectedRagScope,
+    );
+
+    if (_activeSession!.userMessagesCount == 0) {
+      final autoTitle = ConversationService.generateTitle(query);
+      _activeSession!.title = autoTitle;
+    }
+
+    final targetConvId = _activeSession!.id;
+
     // 1. Add User Message
     final userMsg = AcademicChatMessage(
       id: 'usr_${DateTime.now().millisecondsSinceEpoch}',
+      conversationId: targetConvId,
       role: 'user',
       text: query,
       timestamp: DateTime.now(),
     );
-    setState(() => _messages.add(userMsg));
+    _messages.add(userMsg);
+    _activeSession!.messages.add(userMsg);
+    await _conversationService.saveConversation(_activeSession!);
+
+    setState(() {});
     _scrollToBottom();
 
     // 2. Perform BM25 RAG Retrieval if enabled
@@ -188,8 +366,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         contextBuffer.writeln('=== CONTEXT FROM STUDY VAULT ===');
         for (var i = 0; i < citations.length; i++) {
           final m = citations[i];
+          final ocrTag =
+              m.chunk.isOcr ? ' (${m.chunk.extractionType.label})' : '';
           contextBuffer.writeln(
-              '[Source ${i + 1}: ${m.chunk.subject} > ${m.chunk.unit} (${m.chunk.documentName}, p.${m.chunk.pageNumber})]:');
+              '[Source ${i + 1}: ${m.chunk.subject} > ${m.chunk.unit} (${m.chunk.documentName}, p.${m.chunk.pageNumber}$ocrTag)]:');
           contextBuffer.writeln(m.chunk.text);
           contextBuffer.writeln();
         }
@@ -204,14 +384,29 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     // 3. Add Assistant Placeholder
     final assistantMsg = AcademicChatMessage(
       id: 'asst_${DateTime.now().millisecondsSinceEpoch}',
+      conversationId: targetConvId,
       role: 'assistant',
       text: '',
       timestamp: DateTime.now(),
       citations: citations,
       isGenerating: true,
     );
-    setState(() => _messages.add(assistantMsg));
+    _messages.add(assistantMsg);
+    _activeSession!.messages.add(assistantMsg);
+    setState(() {});
     _scrollToBottom();
+
+    // Collect prior multi-turn context (excluding welcome msg, userMsg, and assistantMsg)
+    final history = _messages
+        .where((m) =>
+            m.id != 'msg-welcome' &&
+            m.id != userMsg.id &&
+            m.id != assistantMsg.id &&
+            !m.isGenerating &&
+            m.text.trim().isNotEmpty)
+        .toList();
+    final recentHistory =
+        history.length > 6 ? history.sublist(history.length - 6) : history;
 
     // 4. Stream Tokens from Llama.cpp Engine
     try {
@@ -220,21 +415,33 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         systemPrompt:
             'You are Pal, an expert university academic copilot running on-device.',
         maxTokens: 512,
+        conversationHistory: recentHistory,
       );
 
       await for (final token in tokenStream) {
-        if (!mounted) break;
-        setState(() {
-          assistantMsg.text += token;
-          assistantMsg.tokensPerSecond = _llmService.currentTps;
-        });
-        _scrollToBottom();
+        assistantMsg.text += token;
+        assistantMsg.tokensPerSecond = _llmService.currentTps;
+
+        // Only trigger UI re-render if current active conversation is targetConvId
+        if (mounted && _activeSession?.id == targetConvId) {
+          setState(() {});
+          _scrollToBottom();
+        }
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          assistantMsg.isGenerating = false;
-        });
+      assistantMsg.isGenerating = false;
+
+      final sessionToSave = _conversationService.conversations
+          .cast<ConversationSession?>()
+          .firstWhere((c) => c?.id == targetConvId, orElse: () => null);
+      if (sessionToSave != null) {
+        await _conversationService.saveConversation(sessionToSave);
+      } else if (_activeSession?.id == targetConvId) {
+        await _conversationService.saveConversation(_activeSession!);
+      }
+
+      if (mounted && _activeSession?.id == targetConvId) {
+        setState(() {});
       }
     }
   }
@@ -998,159 +1205,282 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: ChatHistoryDrawer(
+        activeConversationId: _activeSession?.id,
+        onSelectConversation: _selectConversation,
+        onNewChat: _startNewChat,
+      ),
       backgroundColor: AppTheme.canvasBg,
       appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        backgroundColor: AppTheme.canvasBg,
+        elevation: 0,
+        centerTitle: false,
+        titleSpacing: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.menu, color: AppTheme.textPrimary, size: 22),
+          tooltip: 'Chat History',
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
+        title: Row(
           children: [
-            Text('Pal Brain'),
-            Text(
-              'Snapdragon 8 Elite On-Device LLM',
-              style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: AppTheme.highlightBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppTheme.primaryAccent.withValues(alpha: 0.35),
+                ),
+              ),
+              child: const Center(
+                child: Icon(Icons.auto_awesome,
+                    size: 14, color: AppTheme.primaryAccent),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Pal Brain',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: AppTheme.trustPillFill,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.shield_outlined,
+                                size: 9, color: AppTheme.trustPillText),
+                            SizedBox(width: 2.5),
+                            Text(
+                              'On-device',
+                              style: TextStyle(
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.trustPillText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    _activeSession != null &&
+                            _activeSession!.userMessagesCount > 0
+                        ? _activeSession!.title
+                        : 'Your personal academic copilot',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
         actions: [
+          // Subtle New Chat button matching Pal palette
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _promptOrStartNewChat,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppTheme.neutralPillFill,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.cardBorder, width: 0.8),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add, size: 14, color: AppTheme.textPrimary),
+                  SizedBox(width: 3),
+                  Text(
+                    'New',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
           IconButton(
-            icon: const Icon(Icons.tune, color: AppTheme.primaryAccent),
-            tooltip: 'Model Presets & Switcher',
+            icon: const Icon(Icons.tune_outlined,
+                color: AppTheme.primaryAccent, size: 20),
+            tooltip: 'Model Settings & Diagnostics',
             onPressed: _showModelSwitcherModal,
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: Column(
         children: [
-          // 1. Hardware & Active Model Telemetry Bar
-          _buildTelemetryBar(),
+          // 1. Compact Contextual Control Bar
+          _buildContextBar(),
 
-          // 2. RAG Scope Selector Bar
-          _buildRagScopeBar(),
-
-          // 3. Chat Message Stream
+          // 2. Chat Message Stream with Conversational Suggestions
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.all(16),
-              itemCount: _messages.length,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              itemCount: _messages.length + (_messages.length <= 1 ? 1 : 0),
               itemBuilder: (context, index) {
-                final message = _messages[index];
-                return _buildChatBubble(message);
+                if (index < _messages.length) {
+                  return _buildChatBubble(_messages[index]);
+                }
+                return _buildQuickSuggestions();
               },
             ),
           ),
 
-          // 4. Input Field & Send Button
+          // 3. Bottom Input Composer
           _buildInputBar(),
         ],
       ),
     );
   }
 
-  Widget _buildTelemetryBar() {
-    final active = _llmService.activePreset;
+  Widget _buildContextBar() {
+    final hasContext = _selectedRagScope != 'Off';
     final isDownloading = _llmService.downloadingPreset != null;
     final downloading = _llmService.downloadingPreset;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: const BoxDecoration(
-        color: AppTheme.cardSurface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppTheme.canvasBg,
         border: Border(
-          bottom: BorderSide(color: AppTheme.cardBorder, width: 0.5),
+          bottom: BorderSide(
+            color: AppTheme.cardBorder.withValues(alpha: 0.6),
+            width: 0.8,
+          ),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: Row(
-              children: [
-                const Icon(Icons.developer_board,
-                    size: 16, color: AppTheme.primaryAccent),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            children: [
+              InkWell(
+                onTap: _showScopePickerModal,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
+                  decoration: BoxDecoration(
+                    color: hasContext
+                        ? AppTheme.highlightBg
+                        : AppTheme.neutralPillFill,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: hasContext
+                          ? AppTheme.primaryAccent.withValues(alpha: 0.45)
+                          : AppTheme.cardBorder,
+                    ),
+                  ),
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Icon(
+                        hasContext ? Icons.menu_book : Icons.public,
+                        size: 13,
+                        color: hasContext
+                            ? AppTheme.primaryAccent
+                            : AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
                       Text(
-                        _llmService.isModelLoaded && active != null
-                            ? '${active.name} (${active.quant})'
-                            : 'No Model Loaded · Default: ${_llmService.defaultPreset?.name ?? "Llama 3.2 1B"}',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        hasContext
+                            ? 'Context: $_selectedRagScope'
+                            : 'General Knowledge (No Vault)',
+                        style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          color: hasContext
+                              ? AppTheme.textPrimary
+                              : AppTheme.textSecondary,
                         ),
                       ),
-                      Text(
-                        _llmService.acceleratorName,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 9,
-                          color: AppTheme.textSecondary,
-                        ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 14,
+                        color: hasContext
+                            ? AppTheme.primaryAccent
+                            : AppTheme.textSecondary,
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+              const Spacer(),
+              if (hasContext)
+                Text(
+                  '${_ragService.totalIndexedChunks} sources',
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+            ],
           ),
           if (isDownloading && downloading != null) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppTheme.detectedPillFill,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                    color: AppTheme.primaryAccent.withValues(alpha: 0.4)),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 10,
-                    height: 10,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 1.5, color: AppTheme.primaryAccent),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${(downloading.downloadProgress * 100).toStringAsFixed(0)}% (${downloading.downloadSpeedMbps.toStringAsFixed(1)} MB/s)',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.detectedPillText,
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: downloading.downloadProgress,
+                backgroundColor: AppTheme.neutralPillFill,
+                valueColor:
+                    const AlwaysStoppedAnimation<Color>(AppTheme.primaryAccent),
+                minHeight: 3,
               ),
             ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppTheme.trustPillFill,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.flash_on,
-                      size: 12, color: AppTheme.trustPillText),
-                  const SizedBox(width: 4),
-                  Text(
-                    _llmService.isGenerating
-                        ? '${_llmService.currentTps.toStringAsFixed(1)} tok/s'
-                        : 'Hexagon NPU / GPU ON',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.trustPillText,
-                    ),
+            const SizedBox(height: 2),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Downloading ${downloading.name}...',
+                  style: const TextStyle(
+                      fontSize: 9.5, color: AppTheme.textSecondary),
+                ),
+                Text(
+                  '${(downloading.downloadProgress * 100).toStringAsFixed(0)}% • ${downloading.downloadSpeedMbps.toStringAsFixed(1)} MB/s',
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primaryAccent,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ],
@@ -1158,57 +1488,224 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     );
   }
 
-  Widget _buildRagScopeBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: const BoxDecoration(
-        color: AppTheme.canvasBg,
-        border:
-            Border(bottom: BorderSide(color: AppTheme.cardBorder, width: 0.5)),
+  void _showScopePickerModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: Row(
-        children: [
-          const Text(
-            'RAG Scope: ',
-            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: ['Unit 1 (OS)', 'All Notes', 'Off'].map((scope) {
-                  final isSelected = _selectedRagScope == scope;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: FilterChip(
-                      label: Text(scope, style: const TextStyle(fontSize: 11)),
-                      selected: isSelected,
-                      selectedColor: AppTheme.highlightBg,
-                      backgroundColor: AppTheme.neutralPillFill,
-                      side: BorderSide(
-                        color: isSelected
-                            ? AppTheme.primaryAccent
-                            : AppTheme.cardBorder,
-                      ),
-                      labelStyle: TextStyle(
-                        fontSize: 11,
-                        fontWeight:
-                            isSelected ? FontWeight.w700 : FontWeight.w500,
-                        color: isSelected
-                            ? AppTheme.primaryAccent
-                            : AppTheme.textPrimary,
-                      ),
-                      onSelected: (val) {
-                        if (val) setState(() => _selectedRagScope = scope);
-                      },
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cardBorder,
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                  );
-                }).toList(),
+                  ),
+                ),
+                const Text(
+                  'Academic Context Scope',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Select the textbook or lecture note units Pal uses for grounded answers and citations.',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 16),
+                _buildScopeOptionTile(
+                  title: 'Unit 1 (OS)',
+                  subtitle:
+                      'Operating Systems · Process Synchronization & Concurrency',
+                  scopeKey: 'Unit 1 (OS)',
+                  icon: Icons.menu_book,
+                  modalContext: ctx,
+                ),
+                _buildScopeOptionTile(
+                  title: 'All Notes',
+                  subtitle: 'Search across all indexed subjects in Study Vault',
+                  scopeKey: 'All Notes',
+                  icon: Icons.library_books_outlined,
+                  modalContext: ctx,
+                ),
+                _buildScopeOptionTile(
+                  title: 'Off (General Knowledge)',
+                  subtitle:
+                      'Rely on on-device LLM general knowledge without Vault retrieval',
+                  scopeKey: 'Off',
+                  icon: Icons.public,
+                  modalContext: ctx,
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildScopeOptionTile({
+    required String title,
+    required String subtitle,
+    required String scopeKey,
+    required IconData icon,
+    required BuildContext modalContext,
+  }) {
+    final isSelected = _selectedRagScope == scopeKey;
+    return InkWell(
+      onTap: () {
+        setState(() => _selectedRagScope = scopeKey);
+        if (_activeSession != null) {
+          _activeSession!.selectedRagScope = scopeKey;
+          _conversationService.saveConversation(_activeSession!);
+        }
+        Navigator.pop(modalContext);
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.highlightBg
+              : AppTheme.neutralPillFill.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryAccent : AppTheme.cardBorder,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 20,
+                color: isSelected
+                    ? AppTheme.primaryAccent
+                    : AppTheme.textSecondary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight:
+                          isSelected ? FontWeight.w700 : FontWeight.w600,
+                      color: isSelected
+                          ? AppTheme.primaryAccent
+                          : AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                        fontSize: 11, color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check_circle,
+                  size: 18, color: AppTheme.primaryAccent),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickSuggestions() {
+    final suggestions = _selectedRagScope != 'Off'
+        ? [
+            'Explain the core principles of $_selectedRagScope',
+            'Summarize my uploaded notes for this topic',
+            'Quiz me with 3 practice exam questions',
+            'Find my upcoming assignment deadlines',
+          ]
+        : [
+            'Explain TCP vs UDP simply',
+            'Summarize my uploaded lecture notes',
+            'Quiz me on operating systems concepts',
+            'Find my upcoming assignment deadlines',
+          ];
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 10),
+            child: Text(
+              _selectedRagScope != 'Off'
+                  ? 'Suggested for $_selectedRagScope:'
+                  : 'Try asking:',
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textSecondary,
+                letterSpacing: 0.2,
               ),
             ),
           ),
+          ...suggestions.map((prompt) => _buildPromptSuggestionCard(prompt)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPromptSuggestionCard(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => setQuery(text),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppTheme.cardSurface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.cardBorder),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.auto_awesome,
+                  size: 14, color: AppTheme.primaryAccent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios,
+                  size: 11, color: AppTheme.textInactive),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1224,19 +1721,19 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 16, left: 52),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 14, left: 56),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: AppTheme.highlightBg,
           borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(18),
-            topRight: Radius.circular(18),
-            bottomLeft: Radius.circular(18),
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(16),
             bottomRight: Radius.circular(4),
           ),
-          border:
-              Border.all(color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
-          boxShadow: AppTheme.cardShadow,
+          border: Border.all(
+            color: AppTheme.primaryAccent.withValues(alpha: 0.25),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -1245,15 +1742,15 @@ class PalBrainScreenState extends State<PalBrainScreen> {
               msg.text,
               style: const TextStyle(
                 color: AppTheme.textPrimary,
-                fontSize: 14.5,
+                fontSize: 14,
                 height: 1.45,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               _formatTime(msg.timestamp),
               style: const TextStyle(
-                fontSize: 10,
+                fontSize: 9.5,
                 color: AppTheme.textSecondary,
               ),
             ),
@@ -1271,8 +1768,8 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 18),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: AppTheme.cardSurface,
           borderRadius: BorderRadius.circular(16),
@@ -1282,36 +1779,36 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Header: Avatar + Copilot Title + Speed badge
+            // 1. Header: Avatar + Pal Title + Optional Speed badge
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(
                   children: [
                     Container(
-                      width: 28,
-                      height: 28,
+                      width: 24,
+                      height: 24,
                       decoration: BoxDecoration(
                         color: AppTheme.highlightBg,
-                        borderRadius: BorderRadius.circular(8),
+                        shape: BoxShape.circle,
                         border: Border.all(
-                          color: AppTheme.primaryAccent.withValues(alpha: 0.3),
+                          color: AppTheme.primaryAccent.withValues(alpha: 0.35),
                         ),
                       ),
                       child: const Center(
                         child: Icon(
-                          Icons.psychology,
-                          size: 16,
+                          Icons.auto_awesome,
+                          size: 13,
                           color: AppTheme.primaryAccent,
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     const Text(
-                      'Pal Academic Copilot',
+                      'Pal',
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
                         color: AppTheme.textPrimary,
                       ),
                     ),
@@ -1320,26 +1817,26 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                 if (msg.tokensPerSecond != null && msg.tokensPerSecond! > 0)
                   Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.trustPillFill,
-                      borderRadius: BorderRadius.circular(12),
+                      color: AppTheme.neutralPillFill,
+                      borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: AppTheme.trustPillText.withValues(alpha: 0.2),
+                        color: AppTheme.cardBorder,
                       ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Icon(Icons.bolt,
-                            size: 11, color: AppTheme.trustPillText),
-                        const SizedBox(width: 3),
+                            size: 11, color: AppTheme.primaryAccent),
+                        const SizedBox(width: 2),
                         Text(
                           '${msg.tokensPerSecond!.toStringAsFixed(1)} tok/s',
                           style: const TextStyle(
                             fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.trustPillText,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.textSecondary,
                           ),
                         ),
                       ],
@@ -1347,25 +1844,25 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                   ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            // 2. Body: Markdown response or loading state
+            // 2. Body: Markdown response or thinking state
             if (msg.text.isEmpty && msg.isGenerating)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
                   children: const [
                     SizedBox(
-                      width: 14,
-                      height: 14,
+                      width: 13,
+                      height: 13,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
+                        strokeWidth: 1.8,
                         color: AppTheme.primaryAccent,
                       ),
                     ),
                     SizedBox(width: 10),
                     Text(
-                      'Formulating on-device response...',
+                      'Pal is thinking…',
                       style: TextStyle(
                         fontSize: 13,
                         fontStyle: FontStyle.italic,
@@ -1387,13 +1884,13 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                   ),
                   h1: const TextStyle(
                     color: AppTheme.textPrimary,
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: FontWeight.bold,
                     height: 1.35,
                   ),
                   h2: const TextStyle(
                     color: AppTheme.textPrimary,
-                    fontSize: 16,
+                    fontSize: 15.5,
                     fontWeight: FontWeight.bold,
                     height: 1.35,
                   ),
@@ -1444,29 +1941,21 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                 ),
               ),
 
-            // 3. Citations Chips (if any)
+            // 3. Citations Section (if any)
             if (msg.citations.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              const Divider(height: 1, color: AppTheme.cardBorder),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  const Icon(Icons.verified_outlined,
-                      size: 13, color: AppTheme.trustPillText),
-                  const SizedBox(width: 5),
-                  Text(
-                    '${msg.citations.length} Vault Sources Used:',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 12),
+              const Text(
+                'SOURCES',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                  color: AppTheme.textInactive,
+                ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Wrap(
-                spacing: 8,
+                spacing: 6,
                 runSpacing: 6,
                 children: msg.citations
                     .map((c) => _buildCitationChip(context, c))
@@ -1474,167 +1963,166 @@ class PalBrainScreenState extends State<PalBrainScreen> {
               ),
             ],
 
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: AppTheme.cardBorder),
-            const SizedBox(height: 8),
-
-            // 4. Action Row: Copy, Feedback, More Options, Timestamp
-            Row(
-              children: [
-                // Copy Action
-                InkWell(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: msg.text));
-                    setState(() => _copiedMessageId = msg.id);
-                    Future.delayed(const Duration(seconds: 2), () {
-                      if (mounted && _copiedMessageId == msg.id) {
-                        setState(() => _copiedMessageId = null);
-                      }
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isCopied ? Icons.check : Icons.copy_outlined,
-                          size: 14,
-                          color: isCopied
-                              ? AppTheme.trustPillText
-                              : AppTheme.textSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          isCopied ? 'Copied' : 'Copy',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
+            // 4. Action Row: Copy, Feedback, More Options, Timestamp (Only shown once completed)
+            if (!msg.isGenerating) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  // Copy Action
+                  InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: msg.text));
+                      setState(() => _copiedMessageId = msg.id);
+                      Future.delayed(const Duration(seconds: 2), () {
+                        if (mounted && _copiedMessageId == msg.id) {
+                          setState(() => _copiedMessageId = null);
+                        }
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isCopied ? Icons.check : Icons.copy_outlined,
+                            size: 14,
                             color: isCopied
                                 ? AppTheme.trustPillText
                                 : AppTheme.textSecondary,
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-
-                // Thumbs Up
-                IconButton(
-                  iconSize: 15,
-                  padding: const EdgeInsets.all(4),
-                  constraints: const BoxConstraints(),
-                  icon: Icon(
-                    isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                    color: isLiked
-                        ? AppTheme.primaryAccent
-                        : AppTheme.textSecondary,
-                  ),
-                  tooltip: 'Helpful',
-                  onPressed: () {
-                    setState(() {
-                      if (isLiked) {
-                        _likedMessageIds.remove(msg.id);
-                      } else {
-                        _likedMessageIds.add(msg.id);
-                        _dislikedMessageIds.remove(msg.id);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(width: 4),
-
-                // Thumbs Down
-                IconButton(
-                  iconSize: 15,
-                  padding: const EdgeInsets.all(4),
-                  constraints: const BoxConstraints(),
-                  icon: Icon(
-                    isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                    color: isDisliked
-                        ? AppTheme.overduePillText
-                        : AppTheme.textSecondary,
-                  ),
-                  tooltip: 'Not helpful',
-                  onPressed: () {
-                    setState(() {
-                      if (isDisliked) {
-                        _dislikedMessageIds.remove(msg.id);
-                      } else {
-                        _dislikedMessageIds.add(msg.id);
-                        _likedMessageIds.remove(msg.id);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(width: 4),
-
-                // More Options Menu
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert,
-                      size: 15, color: AppTheme.textSecondary),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  onSelected: (val) {
-                    if (val == 'copy') {
-                      Clipboard.setData(ClipboardData(text: msg.text));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Response copied to clipboard'),
-                          duration: Duration(seconds: 2),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    } else if (val == 'regenerate') {
-                      _regenerateResponse(msg);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(
-                      value: 'copy',
-                      child: Row(
-                        children: [
-                          Icon(Icons.content_copy,
-                              size: 16, color: AppTheme.textPrimary),
-                          SizedBox(width: 8),
-                          Text('Copy text', style: TextStyle(fontSize: 13)),
+                          const SizedBox(width: 4),
+                          Text(
+                            isCopied ? 'Copied' : 'Copy',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: isCopied
+                                  ? AppTheme.trustPillText
+                                  : AppTheme.textSecondary,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    const PopupMenuItem(
-                      value: 'regenerate',
-                      child: Row(
-                        children: [
-                          Icon(Icons.refresh,
-                              size: 16, color: AppTheme.primaryAccent),
-                          SizedBox(width: 8),
-                          Text('Regenerate response',
-                              style: TextStyle(fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-
-                const Spacer(),
-
-                // Timestamp
-                Text(
-                  _formatTime(msg.timestamp),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: AppTheme.textSecondary,
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(width: 4),
+
+                  // Thumbs Up
+                  IconButton(
+                    iconSize: 15,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(),
+                    icon: Icon(
+                      isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
+                      color: isLiked
+                          ? AppTheme.primaryAccent
+                          : AppTheme.textSecondary,
+                    ),
+                    tooltip: 'Helpful',
+                    onPressed: () {
+                      setState(() {
+                        if (isLiked) {
+                          _likedMessageIds.remove(msg.id);
+                        } else {
+                          _likedMessageIds.add(msg.id);
+                          _dislikedMessageIds.remove(msg.id);
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 2),
+
+                  // Thumbs Down
+                  IconButton(
+                    iconSize: 15,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(),
+                    icon: Icon(
+                      isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
+                      color: isDisliked
+                          ? AppTheme.overduePillText
+                          : AppTheme.textSecondary,
+                    ),
+                    tooltip: 'Not helpful',
+                    onPressed: () {
+                      setState(() {
+                        if (isDisliked) {
+                          _dislikedMessageIds.remove(msg.id);
+                        } else {
+                          _dislikedMessageIds.add(msg.id);
+                          _likedMessageIds.remove(msg.id);
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 2),
+
+                  // More Options Menu
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert,
+                        size: 15, color: AppTheme.textSecondary),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    onSelected: (val) {
+                      if (val == 'copy') {
+                        Clipboard.setData(ClipboardData(text: msg.text));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Response copied to clipboard'),
+                            duration: Duration(seconds: 2),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      } else if (val == 'regenerate') {
+                        _regenerateResponse(msg);
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'copy',
+                        child: Row(
+                          children: [
+                            Icon(Icons.content_copy,
+                                size: 16, color: AppTheme.textPrimary),
+                            SizedBox(width: 8),
+                            Text('Copy text', style: TextStyle(fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'regenerate',
+                        child: Row(
+                          children: [
+                            Icon(Icons.refresh,
+                                size: 16, color: AppTheme.primaryAccent),
+                            SizedBox(width: 8),
+                            Text('Regenerate response',
+                                style: TextStyle(fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const Spacer(),
+
+                  // Timestamp
+                  Text(
+                    _formatTime(msg.timestamp),
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -1660,7 +2148,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             const SizedBox(width: 5),
             Flexible(
               child: Text(
-                '${match.chunk.documentName} · p.${match.chunk.pageNumber}',
+                '${match.chunk.documentName} · p.${match.chunk.pageNumber}${match.chunk.isOcr ? ' (OCR)' : ''}',
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
@@ -1732,6 +2220,25 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                         ),
                       ),
                     ),
+                    if (match.chunk.isOcr) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.trustPillFill,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          match.chunk.extractionType.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.trustPillText,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -1827,11 +2334,25 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     final isRecording = _sttService.isRecording;
     final isTranscribing = _sttService.isTranscribing;
 
+    String hintText;
+    if (isRecording) {
+      hintText = 'Listening to your voice...';
+    } else if (_selectedRagScope != 'Off') {
+      hintText = 'Ask Pal about $_selectedRagScope...';
+    } else {
+      hintText = 'Ask Pal about your notes, lectures...';
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: const BoxDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
         color: AppTheme.cardSurface,
-        border: Border(top: BorderSide(color: AppTheme.cardBorder)),
+        border: Border(
+          top: BorderSide(
+            color: AppTheme.cardBorder.withValues(alpha: 0.7),
+            width: 0.8,
+          ),
+        ),
       ),
       child: SafeArea(
         top: false,
@@ -1839,24 +2360,25 @@ class PalBrainScreenState extends State<PalBrainScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Whisper Live Status Banner
+            // Voice status banner
             if (isRecording) ...[
               Container(
-                margin: const EdgeInsets.only(bottom: 8),
+                margin: const EdgeInsets.only(bottom: 6),
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTheme.overduePillFill,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                      color: AppTheme.overduePillText.withValues(alpha: 0.3)),
+                    color: AppTheme.overduePillText.withValues(alpha: 0.3),
+                  ),
                 ),
-                child: Row(
+                child: const Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: const [
+                  children: [
                     SizedBox(
-                      width: 8,
-                      height: 8,
+                      width: 7,
+                      height: 7,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: AppTheme.overduePillText,
@@ -1864,9 +2386,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                         ),
                       ),
                     ),
-                    SizedBox(width: 8),
+                    SizedBox(width: 6),
                     Text(
-                      'Listening... Tap mic again to transcribe with On-Device Whisper',
+                      'Listening… Tap mic to finish',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -1878,14 +2400,15 @@ class PalBrainScreenState extends State<PalBrainScreen> {
               ),
             ] else if (isTranscribing) ...[
               Container(
-                margin: const EdgeInsets.only(bottom: 8),
+                margin: const EdgeInsets.only(bottom: 6),
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTheme.detectedPillFill,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                      color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
+                    color: AppTheme.primaryAccent.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1898,9 +2421,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                         color: AppTheme.primaryAccent,
                       ),
                     ),
-                    SizedBox(width: 8),
+                    SizedBox(width: 6),
                     Text(
-                      'Whisper Tiny INT8 converting speech to text locally...',
+                      'Transcribing with On-Device Whisper...',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -1915,8 +2438,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             // Input Controls Row
             Row(
               children: [
-                // On-Device Whisper Microphone Button
+                // Voice input button
                 Container(
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: isRecording
                         ? AppTheme.overduePillFill
@@ -1926,10 +2451,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                       color: isRecording
                           ? AppTheme.overduePillText
                           : AppTheme.cardBorder,
-                      width: isRecording ? 1.5 : 1,
                     ),
                   ),
                   child: IconButton(
+                    padding: EdgeInsets.zero,
                     icon: isTranscribing
                         ? const SizedBox(
                             width: 16,
@@ -1944,11 +2469,11 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                             color: isRecording
                                 ? AppTheme.overduePillText
                                 : AppTheme.primaryAccent,
-                            size: 20,
+                            size: 19,
                           ),
                     tooltip: isRecording
                         ? 'Stop recording & transcribe'
-                        : 'Speak question (Whisper STT)',
+                        : 'Voice Input',
                     onPressed: isTranscribing ? null : _toggleVoiceRecording,
                   ),
                 ),
@@ -1965,9 +2490,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                       color: AppTheme.textPrimary,
                     ),
                     decoration: InputDecoration(
-                      hintText: isRecording
-                          ? 'Listening to your voice...'
-                          : 'Ask Pal anything from your textbooks...',
+                      hintText: hintText,
                       hintStyle: const TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 13.5,
@@ -1976,19 +2499,21 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                       filled: true,
                       fillColor: AppTheme.canvasBg,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(22),
                         borderSide:
                             const BorderSide(color: AppTheme.cardBorder),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(22),
                         borderSide:
                             const BorderSide(color: AppTheme.cardBorder),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(22),
                         borderSide:
                             const BorderSide(color: AppTheme.primaryAccent),
                       ),
@@ -2000,11 +2525,14 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
                 // Send to LLM Button
                 Container(
+                  width: 40,
+                  height: 40,
                   decoration: const BoxDecoration(
                     color: AppTheme.primaryAccent,
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
+                    padding: EdgeInsets.zero,
                     icon: _llmService.isGenerating
                         ? const SizedBox(
                             width: 16,
@@ -2014,7 +2542,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.arrow_upward, color: Colors.white),
+                        : const Icon(Icons.arrow_upward,
+                            color: Colors.white, size: 20),
+                    tooltip: 'Send question',
                     onPressed: _sendMessage,
                   ),
                 ),

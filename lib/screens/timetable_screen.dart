@@ -6,6 +6,7 @@ import '../services/timetable_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auto_record_consent_sheet.dart';
 import '../widgets/quick_add_class_sheet.dart';
+import '../widgets/timetable_image_preview_sheet.dart';
 import 'add_class_wizard_screen.dart';
 import 'class_details_modal.dart';
 import 'lectures_history_screen.dart';
@@ -60,8 +61,18 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final end = _currentWeekStart.add(const Duration(days: 6));
 
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
 
     final startStr = '${months[start.month - 1]} ${start.day}';
@@ -79,6 +90,10 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   void _openQuickAdd({String? day}) {
     QuickAddClassSheet.show(context, initialDay: day ?? _selectedDay);
+  }
+
+  void _openImportTimetable() {
+    TimetableImagePreviewSheet.show(context);
   }
 
   Color _getSubjectAccentColor(String subject) {
@@ -103,7 +118,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
         backgroundColor: AppTheme.canvasBg,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: AppTheme.textPrimary),
+          icon: const Icon(Icons.arrow_back_ios_new,
+              size: 18, color: AppTheme.textPrimary),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Column(
@@ -130,18 +146,28 @@ class _TimetableScreenState extends State<TimetableScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.document_scanner_outlined,
+                color: AppTheme.primaryAccent),
+            tooltip: 'Import Timetable Image',
+            onPressed: _openImportTimetable,
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: AppTheme.textPrimary),
             color: AppTheme.cardSurface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             onSelected: (val) {
-              if (val == 'quick_add') {
+              if (val == 'import_timetable') {
+                _openImportTimetable();
+              } else if (val == 'quick_add') {
                 _openQuickAdd();
               } else if (val == 'reset') {
                 _timetableService.resetToDefaultSeed();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Timetable reset to sample academic schedule'),
+                    content:
+                        Text('Timetable reset to sample academic schedule'),
                     duration: Duration(seconds: 2),
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -149,7 +175,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
               } else if (val == 'clear') {
                 _timetableService.clearAll();
               } else if (val == 'auto_record_toggle') {
-                final isEnabled = LectureRecordingService.instance.isAutoRecordEnabled;
+                final isEnabled =
+                    LectureRecordingService.instance.isAutoRecordEnabled;
                 if (!isEnabled) {
                   AutoRecordConsentSheet.show(context);
                 } else {
@@ -164,7 +191,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
               } else if (val == 'my_lectures') {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const LecturesHistoryScreen()),
+                  MaterialPageRoute(
+                      builder: (_) => const LecturesHistoryScreen()),
                 );
               } else if (val == 'dev_test_mode') {
                 RecordingScheduler.instance.scheduleTestLecture(
@@ -174,7 +202,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 );
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Test recording scheduled: starting in 1s, running for 10s'),
+                    content: Text(
+                        'Test recording scheduled: starting in 1s, running for 10s'),
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
@@ -193,7 +222,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
                       color: AppTheme.primaryAccent,
                     ),
                     const SizedBox(width: 8),
-                    const Text('Auto-Record Lectures', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    const Text('Auto-Record Lectures',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -203,7 +234,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   children: [
                     Icon(Icons.mic, size: 18, color: AppTheme.primaryAccent),
                     SizedBox(width: 8),
-                    Text('My Lectures', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text('My Lectures',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -211,20 +244,38 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 value: 'dev_test_mode',
                 child: Row(
                   children: [
-                    Icon(Icons.play_circle_outline, size: 18, color: AppTheme.primaryAccent),
+                    Icon(Icons.play_circle_outline,
+                        size: 18, color: AppTheme.primaryAccent),
                     SizedBox(width: 8),
-                    Text('Test 10s Auto-Record', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text('Test 10s Auto-Record',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
               const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'import_timetable',
+                child: Row(
+                  children: [
+                    Icon(Icons.document_scanner_outlined,
+                        size: 18, color: AppTheme.primaryAccent),
+                    SizedBox(width: 8),
+                    Text('Import Timetable Image',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'quick_add',
                 child: Row(
                   children: [
                     Icon(Icons.bolt, size: 18, color: AppTheme.primaryAccent),
                     SizedBox(width: 8),
-                    Text('Quick Add Class', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text('Quick Add Class',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -232,9 +283,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 value: 'reset',
                 child: Row(
                   children: [
-                    Icon(Icons.restart_alt, size: 18, color: AppTheme.textSecondary),
+                    Icon(Icons.restart_alt,
+                        size: 18, color: AppTheme.textSecondary),
                     SizedBox(width: 8),
-                    Text('Reset to Sample Schedule', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text('Reset to Sample Schedule',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -242,9 +296,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 value: 'clear',
                 child: Row(
                   children: [
-                    Icon(Icons.delete_sweep_outlined, size: 18, color: AppTheme.overduePillText),
+                    Icon(Icons.delete_sweep_outlined,
+                        size: 18, color: AppTheme.overduePillText),
                     SizedBox(width: 8),
-                    Text('Clear All Classes', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.overduePillText)),
+                    Text('Clear All Classes',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.overduePillText)),
                   ],
                 ),
               ),
@@ -326,10 +385,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: isSelected ? AppTheme.primaryAccent : AppTheme.cardSurface,
+                color:
+                    isSelected ? AppTheme.primaryAccent : AppTheme.cardSurface,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isSelected ? AppTheme.primaryAccent : AppTheme.cardBorder,
+                  color:
+                      isSelected ? AppTheme.primaryAccent : AppTheme.cardBorder,
                 ),
                 boxShadow: isSelected
                     ? [
@@ -375,7 +436,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   color: AppTheme.highlightBg,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.event_available, color: AppTheme.primaryAccent, size: 28),
+                child: const Icon(Icons.event_available,
+                    color: AppTheme.primaryAccent, size: 28),
               ),
               const SizedBox(height: 14),
               Text(
@@ -400,8 +462,10 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.primaryAccent,
                   side: const BorderSide(color: AppTheme.primaryAccent),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
                 icon: const Icon(Icons.add, size: 16),
                 label: Text('Add class on $_selectedDay'),
@@ -415,8 +479,16 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
     // Timeline Hours (8:00 AM to 5:00 PM)
     final hours = [
-      '8:00', '9:00', '10:00', '11:00', '12:00',
-      '1:00', '2:00', '3:00', '4:00', '5:00'
+      '8:00',
+      '9:00',
+      '10:00',
+      '11:00',
+      '12:00',
+      '1:00',
+      '2:00',
+      '3:00',
+      '4:00',
+      '5:00'
     ];
 
     return SingleChildScrollView(
@@ -534,7 +606,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
                                   letterSpacing: -0.3,
                                 ),
                               ),
-                              if (entry.room != null && entry.room!.isNotEmpty) ...[
+                              if (entry.room != null &&
+                                  entry.room!.isNotEmpty) ...[
                                 const SizedBox(height: 3),
                                 Text(
                                   entry.room!,
@@ -550,7 +623,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
                         ),
                         // Time Range Tag
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: AppTheme.neutralPillFill,
                             borderRadius: BorderRadius.circular(8),
@@ -565,7 +639,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        const Icon(Icons.chevron_right, size: 18, color: AppTheme.textInactive),
+                        const Icon(Icons.chevron_right,
+                            size: 18, color: AppTheme.textInactive),
                       ],
                     ),
                   ),
@@ -636,11 +711,13 @@ class _TimetableScreenState extends State<TimetableScreen> {
               child: Stack(
                 alignment: Alignment.center,
                 children: const [
-                  Icon(Icons.calendar_month, color: AppTheme.primaryAccent, size: 40),
+                  Icon(Icons.calendar_month,
+                      color: AppTheme.primaryAccent, size: 40),
                   Positioned(
                     top: 12,
                     right: 14,
-                    child: Icon(Icons.auto_awesome, color: AppTheme.primaryAccent, size: 14),
+                    child: Icon(Icons.auto_awesome,
+                        color: AppTheme.primaryAccent, size: 14),
                   ),
                 ],
               ),
@@ -689,6 +766,30 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ),
                 ),
                 onPressed: () => _openAddClassWizard(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppTheme.cardBorder),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(26),
+                  ),
+                ),
+                icon: const Icon(Icons.document_scanner_outlined,
+                    color: AppTheme.primaryAccent, size: 18),
+                label: const Text(
+                  'Import Timetable Image',
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                onPressed: _openImportTimetable,
               ),
             ),
           ],

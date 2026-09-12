@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/main_navigation_screen.dart';
+import 'services/conversation_service.dart';
 import 'services/deadline_service.dart';
 import 'services/lecture_recording_service.dart';
 import 'services/llm_service.dart';
@@ -36,6 +37,7 @@ void main() async {
     TimetableService.instance.init(),
     LectureRecordingService.instance.init(),
     RagService.instance.init(),
+    ConversationService.instance.init(),
     Future.microtask(() => OcrService.instance.init()),
   ]);
 

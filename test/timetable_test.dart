@@ -2,10 +2,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pal_academic_copilot/models/parsed_timetable_entry.dart';
 import 'package:pal_academic_copilot/models/timetable_entry.dart';
 import 'package:pal_academic_copilot/screens/add_class_wizard_screen.dart';
+import 'package:pal_academic_copilot/screens/class_details_modal.dart';
 import 'package:pal_academic_copilot/screens/dashboard_screen.dart';
 import 'package:pal_academic_copilot/screens/timetable_screen.dart';
+import 'package:pal_academic_copilot/screens/timetable_verification_screen.dart';
+import 'package:pal_academic_copilot/services/timetable_parser.dart';
 import 'package:pal_academic_copilot/services/timetable_service.dart';
 import 'package:pal_academic_copilot/theme/app_theme.dart';
 
@@ -302,10 +306,143 @@ void main() {
       // Verify Screen 9 Empty State is rendered
       expect(find.text('Your week is waiting'), findsOneWidget);
       expect(find.text('Add Your First Class'), findsOneWidget);
+      expect(find.text('Import Timetable Image'), findsOneWidget);
       expect(find.byIcon(Icons.calendar_month), findsOneWidget);
 
       // Restore seed data
       await TimetableService.instance.resetToDefaultSeed(saveToDisk: false);
+    });
+
+    testWidgets(
+        'TimetableVerificationScreen renders extracted classes and review badges',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final dummyResult = ParsedTimetableResult(
+        entries: [
+          ParsedTimetableEntry(
+            id: 'mock-1',
+            subject: 'Computer Architecture',
+            dayOfWeek: 'Mon',
+            startTime: '09:00 AM',
+            endTime: '10:00 AM',
+            room: 'Room 303',
+            type: 'Lecture',
+            confidence: 0.95,
+            requiresReview: false,
+          ),
+          ParsedTimetableEntry(
+            id: 'mock-2',
+            subject: 'Cloud Computing Lab',
+            dayOfWeek: 'Mon',
+            startTime: '10:00 AM',
+            endTime: '11:00 AM',
+            room: 'Lab 4',
+            type: 'Lab',
+            confidence: 0.65,
+            requiresReview: true,
+            reviewReason: 'Time inferred from Period II',
+          ),
+        ],
+        layoutDescription: 'Grid: Days as Columns, Times as Rows',
+        dayHeaders: [],
+        timeHeaders: [],
+        contentItems: [],
+        cellRects: [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: TimetableVerificationScreen(
+            parsedResult: dummyResult,
+            imagePath: '/tmp/test_timetable.png',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // Check header and privacy message
+      expect(find.text('Review Timetable'), findsOneWidget);
+      expect(find.text('Found 2 classes'), findsOneWidget);
+      expect(find.text('Processed privately on your device · 100% Offline'),
+          findsOneWidget);
+      expect(find.text('1 review'), findsOneWidget);
+
+      // Check class cards
+      expect(find.text('Computer Architecture'), findsOneWidget);
+      expect(find.text('Room 303'), findsOneWidget);
+      expect(find.text('Cloud Computing Lab'), findsOneWidget);
+      expect(find.text('Time inferred from Period II'), findsOneWidget);
+
+      // Tap to edit class
+      await tester.tap(find.text('Computer Architecture'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Modal is open
+      expect(find.text('Edit Class'), findsOneWidget);
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Computer Architecture'),
+          'Advanced Architecture');
+      await tester.pump();
+
+      await tester.tap(find.text('Save Changes'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Verify edited text appears
+      expect(find.text('Advanced Architecture'), findsOneWidget);
+    });
+
+    testWidgets('ClassDetailsModal allows editing class time and details',
+        (tester) async {
+      const entry = TimetableEntry(
+        id: 'edit-test-1',
+        subject: 'Microprocessors',
+        dayOfWeek: 'Tue',
+        startTime: '09:00 AM',
+        endTime: '10:00 AM',
+        room: 'Lab 2',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: const ClassDetailsModal(entry: entry),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Microprocessors'), findsOneWidget);
+      expect(find.text('09:00 AM – 10:00 AM (1 hour)'), findsOneWidget);
+
+      // Tap Edit button
+      await tester.tap(find.text('Edit'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Edit Class Details'), findsOneWidget);
+      expect(find.text('Start Time'), findsOneWidget);
+      expect(find.text('End Time'), findsOneWidget);
+
+      // Verify start and end times are displayed
+      expect(find.text('09:00 AM'), findsOneWidget);
+      expect(find.text('10:00 AM'), findsOneWidget);
+
+      // Save changes
+      await tester.ensureVisible(find.text('Save Changes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save Changes'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Class updated successfully'), findsOneWidget);
     });
   });
 }

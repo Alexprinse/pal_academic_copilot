@@ -1,3 +1,5 @@
+import 'extracted_page_content.dart';
+
 class TextChunk {
   final String id;
   final String subject;
@@ -6,6 +8,8 @@ class TextChunk {
   final int pageNumber;
   final String text;
   final int wordCount;
+  final ExtractionType extractionType;
+  final double confidence;
 
   TextChunk({
     required this.id,
@@ -15,7 +19,11 @@ class TextChunk {
     required this.pageNumber,
     required this.text,
     required this.wordCount,
+    this.extractionType = ExtractionType.nativePdf,
+    this.confidence = 1.0,
   });
+
+  bool get isOcr => extractionType.isOcr;
 
   Map<String, dynamic> toMap() {
     return {
@@ -26,10 +34,23 @@ class TextChunk {
       'pageNumber': pageNumber,
       'text': text,
       'wordCount': wordCount,
+      'extractionType': extractionType.name,
+      'confidence': confidence,
     };
   }
 
   factory TextChunk.fromMap(Map<String, dynamic> map) {
+    ExtractionType type = ExtractionType.nativePdf;
+    final typeStr = map['extractionType'] as String?;
+    if (typeStr != null) {
+      for (final val in ExtractionType.values) {
+        if (val.name == typeStr) {
+          type = val;
+          break;
+        }
+      }
+    }
+
     return TextChunk(
       id: map['id'] as String,
       subject: map['subject'] as String,
@@ -38,6 +59,8 @@ class TextChunk {
       pageNumber: map['pageNumber'] as int,
       text: map['text'] as String,
       wordCount: map['wordCount'] as int,
+      extractionType: type,
+      confidence: (map['confidence'] as num?)?.toDouble() ?? 1.0,
     );
   }
 }
@@ -47,6 +70,18 @@ class ChunkMatch {
   final double score;
 
   ChunkMatch({required this.chunk, required this.score});
+
+  Map<String, dynamic> toMap() => {
+        'chunk': chunk.toMap(),
+        'score': score,
+      };
+
+  factory ChunkMatch.fromMap(Map<String, dynamic> map) {
+    return ChunkMatch(
+      chunk: TextChunk.fromMap(map['chunk'] as Map<String, dynamic>),
+      score: (map['score'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
 }
 
 class VaultDocument {
@@ -58,6 +93,8 @@ class VaultDocument {
   final int chunkCount;
   final int pageCount;
   final DateTime addedAt;
+  final int ocrPageCount;
+  final int nativePageCount;
 
   VaultDocument({
     required this.id,
@@ -68,7 +105,11 @@ class VaultDocument {
     required this.chunkCount,
     required this.pageCount,
     required this.addedAt,
+    this.ocrPageCount = 0,
+    this.nativePageCount = 0,
   });
+
+  bool get hasOcr => ocrPageCount > 0;
 
   Map<String, dynamic> toMap() {
     return {
@@ -80,6 +121,8 @@ class VaultDocument {
       'chunkCount': chunkCount,
       'pageCount': pageCount,
       'addedAt': addedAt.toIso8601String(),
+      'ocrPageCount': ocrPageCount,
+      'nativePageCount': nativePageCount,
     };
   }
 
@@ -93,6 +136,8 @@ class VaultDocument {
       chunkCount: map['chunkCount'] as int,
       pageCount: map['pageCount'] as int,
       addedAt: DateTime.parse(map['addedAt'] as String),
+      ocrPageCount: map['ocrPageCount'] as int? ?? 0,
+      nativePageCount: map['nativePageCount'] as int? ?? 0,
     );
   }
 }
