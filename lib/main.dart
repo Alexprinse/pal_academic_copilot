@@ -4,6 +4,7 @@ import 'screens/main_navigation_screen.dart';
 import 'services/deadline_service.dart';
 import 'services/llm_service.dart';
 import 'services/ocr_service.dart';
+import 'services/profile_service.dart';
 import 'services/rag_service.dart';
 import 'services/stt_service.dart';
 import 'theme/app_theme.dart';
@@ -24,6 +25,7 @@ void main() async {
   // Initialize core on-device engines in parallel
   await Future.wait([
     DeadlineService.instance.init(),
+    ProfileService.instance.init(),
     RagService.instance.init(),
     Future.microtask(() => OcrService.instance.init()),
   ]);

@@ -133,7 +133,7 @@ class SttService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String> stopRecording() async {
+  Future<String> stopRecording({String? defaultFallback}) async {
     if (!_isRecording) return _transcription;
 
     final path = await _recorder.stop();
@@ -142,12 +142,13 @@ class SttService extends ChangeNotifier {
     notifyListeners();
 
     if (path != null && File(path).existsSync()) {
-      return await transcribeAudioFile(path);
+      return await transcribeAudioFile(path, defaultFallback: defaultFallback);
     }
     return '';
   }
 
-  Future<String> transcribeAudioFile(String wavFilePath) async {
+  Future<String> transcribeAudioFile(String wavFilePath,
+      {String? defaultFallback}) async {
     _isTranscribing = true;
     notifyListeners();
 
@@ -155,7 +156,7 @@ class SttService extends ChangeNotifier {
       if (_recognizer == null) {
         // Mock / fallback transcription for demonstration if models are still extracting
         await Future.delayed(const Duration(milliseconds: 600));
-        _transcription =
+        _transcription = defaultFallback ??
             'Create a deadline this Friday by 5pm for Operating Systems Lab Assignment 2 on process synchronization.';
         return _transcription;
       }

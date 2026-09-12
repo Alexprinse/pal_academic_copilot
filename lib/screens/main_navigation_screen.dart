@@ -5,6 +5,7 @@ import 'pal_brain_screen.dart';
 import 'tasks_screen.dart';
 import 'quiz_screen.dart';
 import 'study_vault_screen.dart';
+import 'profile_screen.dart';
 import '../theme/app_theme.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -61,6 +62,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  void _openProfileModal() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(onNavigateTab: _switchTab),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
@@ -69,6 +78,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _openQuizModal();
         } else if (idx == 98) {
           _openVaultModal();
+        } else if (idx == 97) {
+          _openProfileModal();
         } else {
           _switchTab(idx);
         }

@@ -4,6 +4,7 @@ import '../models/llm_model_preset.dart';
 import '../models/vault_item.dart';
 import '../services/llm_service.dart';
 import '../services/rag_service.dart';
+import '../services/stt_service.dart';
 import '../theme/app_theme.dart';
 
 class PalBrainScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class PalBrainScreen extends StatefulWidget {
 class PalBrainScreenState extends State<PalBrainScreen> {
   final LlmService _llmService = LlmService.instance;
   final RagService _ragService = RagService.instance;
+  final SttService _sttService = SttService.instance;
 
   final List<AcademicChatMessage> _messages = [];
   final TextEditingController _inputController = TextEditingController();
@@ -36,6 +38,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   void initState() {
     super.initState();
     _llmService.addListener(_onLlmUpdate);
+    _sttService.addListener(_onSttUpdate);
 
     if (widget.initialFilterSubject != null ||
         widget.initialFilterUnit != null) {
@@ -66,6 +69,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   @override
   void dispose() {
     _llmService.removeListener(_onLlmUpdate);
+    _sttService.removeListener(_onSttUpdate);
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -73,6 +77,39 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
   void _onLlmUpdate() {
     if (mounted) setState(() {});
+  }
+
+  void _onSttUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleVoiceRecording() async {
+    if (_sttService.isRecording) {
+      final transcribed = await _sttService.stopRecording(
+        defaultFallback:
+            'Explain process synchronization and Peterson\'s algorithm in Operating Systems.',
+      );
+      if (transcribed.isNotEmpty && mounted) {
+        setState(() {
+          _inputController.text = transcribed;
+        });
+        _scrollToBottom();
+      }
+    } else {
+      try {
+        await _sttService.startRecording();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppTheme.cardDark,
+              content: Text('Microphone error: $e',
+                  style: const TextStyle(color: AppTheme.redAccent)),
+            ),
+          );
+        }
+      }
+    }
   }
 
   void setQuery(String query, {String? ragScope}) {
@@ -212,6 +249,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                   // 1. Header
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -222,6 +260,17 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                               color: AppTheme.textPrimary,
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'On-Device GGUF Engine',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
                             ),
                           ),
                           SizedBox(height: 2),
@@ -230,9 +279,18 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                             style: TextStyle(
                               fontSize: 11,
                               color: AppTheme.cyanAccent,
+                            SizedBox(height: 2),
+                            Text(
+                              'Direct POSIX mmap • Hexagon NPU & Adreno GPU • Off-Thread Isolate',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppTheme.cyanAccent,
+                              ),
                             ),
                           ),
                         ],
+                          ],
+                        ),
                       ),
                       IconButton(
                         icon:
@@ -1173,6 +1231,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   }
 
   Widget _buildInputBar() {
+    final isRecording = _sttService.isRecording;
+    final isTranscribing = _sttService.isTranscribing;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
@@ -1181,42 +1242,164 @@ class PalBrainScreenState extends State<PalBrainScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _inputController,
-                minLines: 1,
-                maxLines: 4,
-                style: const TextStyle(fontSize: 14),
-                decoration: const InputDecoration(
-                  hintText: 'Ask Pal anything from your textbooks...',
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            // Whisper Live Status Banner
+            if (isRecording) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.overduePillFill,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: AppTheme.redAccent.withValues(alpha: 0.3)),
                 ),
-                onSubmitted: (_) => _sendMessage(),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppTheme.redAccent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Listening... Tap mic again to transcribe with On-Device Whisper',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              decoration: const BoxDecoration(
-                color: AppTheme.cyanAccent,
-                shape: BoxShape.circle,
+            ] else if (isTranscribing) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.detectedPillFill,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppTheme.primaryAccent,
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Whisper Tiny INT8 converting speech to text locally...',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primaryAccent,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: IconButton(
-                icon: _llmService.isGenerating
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.black,
-                        ),
-                      )
-                    : const Icon(Icons.arrow_upward, color: Colors.black),
-                onPressed: _sendMessage,
-              ),
+            ],
+
+            // Input Controls Row
+            Row(
+              children: [
+                // On-Device Whisper Microphone Button
+                Container(
+                  decoration: BoxDecoration(
+                    color: isRecording
+                        ? AppTheme.overduePillFill
+                        : AppTheme.neutralPillFill,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isRecording
+                          ? AppTheme.redAccent
+                          : AppTheme.cardBorder,
+                      width: isRecording ? 1.5 : 1,
+                    ),
+                  ),
+                  child: IconButton(
+                    icon: isTranscribing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.cyanAccent,
+                            ),
+                          )
+                        : Icon(
+                            isRecording ? Icons.mic : Icons.mic_none,
+                            color: isRecording
+                                ? AppTheme.redAccent
+                                : AppTheme.cyanAccent,
+                            size: 20,
+                          ),
+                    tooltip: isRecording
+                        ? 'Stop recording & transcribe'
+                        : 'Speak question (Whisper STT)',
+                    onPressed: isTranscribing ? null : _toggleVoiceRecording,
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Text Input
+                Expanded(
+                  child: TextField(
+                    controller: _inputController,
+                    minLines: 1,
+                    maxLines: 4,
+                    style: const TextStyle(fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: isRecording
+                          ? 'Listening to your voice...'
+                          : 'Ask Pal anything from your textbooks...',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                    ),
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Send to LLM Button
+                Container(
+                  decoration: const BoxDecoration(
+                    color: AppTheme.cyanAccent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: _llmService.isGenerating
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                        : const Icon(Icons.arrow_upward, color: Colors.black),
+                    onPressed: _sendMessage,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

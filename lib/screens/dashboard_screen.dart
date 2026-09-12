@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/deadline.dart';
 import '../services/deadline_service.dart';
+import '../services/profile_service.dart';
 import '../theme/app_theme.dart';
 
 class ClassScheduleItem {
@@ -32,6 +33,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final DeadlineService _deadlineService = DeadlineService.instance;
+  final ProfileService _profileService = ProfileService.instance;
 
   final List<ClassScheduleItem> _todayClasses = const [
     ClassScheduleItem(
@@ -64,11 +66,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _deadlineService.addListener(_onUpdate);
+    _profileService.addListener(_onUpdate);
   }
 
   @override
   void dispose() {
     _deadlineService.removeListener(_onUpdate);
+    _profileService.removeListener(_onUpdate);
     super.dispose();
   }
 
@@ -105,7 +109,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${_getGreeting()}, Alex',
+                          '${_getGreeting()}, ${_profileService.profile.name.split(' ').first}',
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.w800,
@@ -157,25 +161,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // Academic Monogram Avatar Circle
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: AppTheme.cardSurface,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: AppTheme.cardBorder, width: 1.5),
-                            boxShadow: AppTheme.cardShadow,
-                          ),
-                          alignment: Alignment.center,
-                          child: const Text(
-                            'AP',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.primaryAccent,
-                              letterSpacing: 0.5,
+                        // Academic Monogram Avatar Circle (Clickable -> Student Profile Screen)
+                        Tooltip(
+                          message: 'Student Profile',
+                          child: InkWell(
+                            onTap: () =>
+                                widget.onNavigateTab(97), // Open Profile
+                            borderRadius: BorderRadius.circular(20),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: AppTheme.cardSurface,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: AppTheme.primaryAccent
+                                        .withValues(alpha: 0.7),
+                                    width: 1.5),
+                                boxShadow: AppTheme.cardShadow,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _profileService.profile.initials,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.primaryAccent,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
                             ),
                           ),
                         ),
