@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/deadline_service.dart';
+import 'services/lecture_recording_service.dart';
 import 'services/llm_service.dart';
 import 'services/ocr_service.dart';
+import 'services/pal_notification_service.dart';
 import 'services/profile_service.dart';
 import 'services/rag_service.dart';
+import 'services/recording_scheduler.dart';
 import 'services/stt_service.dart';
+import 'services/timetable_service.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -22,13 +26,21 @@ void main() async {
     ),
   );
 
+  // Initialize notifications & recording scheduler
+  PalNotificationService.instance.init();
+
   // Initialize core on-device engines in parallel
   await Future.wait([
     DeadlineService.instance.init(),
     ProfileService.instance.init(),
+    TimetableService.instance.init(),
+    LectureRecordingService.instance.init(),
     RagService.instance.init(),
     Future.microtask(() => OcrService.instance.init()),
   ]);
+
+  // Start background timetable recording scheduler
+  RecordingScheduler.instance.start();
 
   // Non-blocking initialization of heavy native AI services
   SttService.instance.init();

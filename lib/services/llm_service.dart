@@ -45,15 +45,68 @@ class LlmService extends ChangeNotifier {
 
   bool get isModelLoaded => _engine != null && _chat != null;
 
+  String _defaultModelId = 'llama3.2-1b';
+  String get defaultModelId => _defaultModelId;
+  bool isDefaultModel(String modelId) => _defaultModelId == modelId;
+
+  LlmModelPreset? get defaultPreset {
+    try {
+      return _presets.firstWhere((p) => p.id == _defaultModelId);
+    } catch (_) {
+      return _presets.isNotEmpty ? _presets.first : null;
+    }
+  }
+
+  Future<void> setDefaultModel(String modelId,
+      {bool autoLoadIfDownloaded = true}) async {
+    _defaultModelId = modelId;
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final prefFile = File('${docsDir.path}/default_model_id.txt');
+      await prefFile.writeAsString(modelId);
+    } catch (e) {
+      debugPrint('Note: unable to write default_model_id.txt: $e');
+    }
+
+    final targetPreset = defaultPreset;
+    if (targetPreset != null) {
+      _activePreset = targetPreset;
+      if (autoLoadIfDownloaded &&
+          targetPreset.status == ModelStatus.downloaded &&
+          !isModelLoaded) {
+        await loadModel(targetPreset);
+      }
+    }
+    notifyListeners();
+  }
+
   Future<void> init() async {
     await checkDownloadedModels();
-    // Default to SmolLM2 preset
-    _activePreset = _presets.first;
-    if (_activePreset!.status == ModelStatus.downloaded) {
-      await loadModel(_activePreset!);
+
+    // Load saved default model ID if present
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final prefFile = File('${docsDir.path}/default_model_id.txt');
+      if (await prefFile.exists()) {
+        final savedId = (await prefFile.readAsString()).trim();
+        if (savedId.isNotEmpty && _presets.any((p) => p.id == savedId)) {
+          _defaultModelId = savedId;
+        }
+      }
+    } catch (e) {
+      debugPrint('Note: unable to read default_model_id.txt: $e');
+    }
+
+    final targetPreset = defaultPreset ?? _presets.first;
+    _activePreset = targetPreset;
+
+    if (targetPreset.status == ModelStatus.downloaded) {
+      await loadModel(targetPreset);
     } else {
       _acceleratorName = 'Snapdragon 8 Elite (Adreno 830 GPU / Hexagon NPU)';
       _llmStatus = 'Ready for GGUF model download (Hardware Accel Enabled)';
+      _llmStatus =
+          'Default model (${targetPreset.name}) not downloaded yet. Please download to start inference.';
       notifyListeners();
     }
   }

@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import '../models/deadline.dart';
+import '../models/lecture_recording.dart';
+import '../models/timetable_entry.dart';
 import '../services/deadline_service.dart';
+import '../services/lecture_recording_service.dart';
 import '../services/profile_service.dart';
+import '../services/timetable_service.dart';
 import '../theme/app_theme.dart';
+import 'lectures_history_screen.dart';
+import 'timetable_screen.dart';
 
 class ClassScheduleItem {
   final String code;
@@ -34,45 +40,25 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final DeadlineService _deadlineService = DeadlineService.instance;
   final ProfileService _profileService = ProfileService.instance;
-
-  final List<ClassScheduleItem> _todayClasses = const [
-    ClassScheduleItem(
-      code: 'CS 301',
-      name: 'Operating Systems: Concurrency & Locks',
-      time: '10:00 AM – 11:30 AM',
-      room: 'Lecture Hall B3',
-      status: 'Ready to record',
-      isReadyToRecord: true,
-    ),
-    ClassScheduleItem(
-      code: 'MATH 220',
-      name: 'Discrete Mathematics: Graph Theory',
-      time: '01:30 PM – 03:00 PM',
-      room: 'Room 402',
-      status: 'Upcoming',
-      isReadyToRecord: false,
-    ),
-    ClassScheduleItem(
-      code: 'PHYS 102',
-      name: 'Engineering Physics: Wave Optics',
-      time: '03:30 PM – 05:00 PM',
-      room: 'Science Complex C1',
-      status: 'Recorded (52m)',
-      isReadyToRecord: false,
-    ),
-  ];
+  final TimetableService _timetableService = TimetableService.instance;
+  final LectureRecordingService _recordingService =
+      LectureRecordingService.instance;
 
   @override
   void initState() {
     super.initState();
     _deadlineService.addListener(_onUpdate);
     _profileService.addListener(_onUpdate);
+    _timetableService.addListener(_onUpdate);
+    _recordingService.addListener(_onUpdate);
   }
 
   @override
   void dispose() {
     _deadlineService.removeListener(_onUpdate);
     _profileService.removeListener(_onUpdate);
+    _timetableService.removeListener(_onUpdate);
+    _recordingService.removeListener(_onUpdate);
     super.dispose();
   }
 
@@ -105,58 +91,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${_getGreeting()}, ${_profileService.profile.name.split(' ').first}',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.6,
-                            color: AppTheme.textPrimary,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${_getGreeting()}, ${_profileService.profile.name.split(' ').first}',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.6,
+                              color: AppTheme.textPrimary,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'Saturday, September 12',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: AppTheme.textSecondary,
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Saturday, September 12',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppTheme.textSecondary,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Study Vault Quick Access Button
-                        InkWell(
-                          onTap: () =>
-                              widget.onNavigateTab(98), // Open Study Vault
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: AppTheme.neutralPillFill,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppTheme.cardBorder),
-                            ),
-                            child: const Row(
-                              children: [
-                                Text('📚', style: TextStyle(fontSize: 14)),
-                                SizedBox(width: 5),
-                                Text(
-                                  'Vault',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.textPrimary,
-                                  ),
+                        // Timetable Quick Access Button
+                        Tooltip(
+                          message: 'Weekly Timetable',
+                          child: InkWell(
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const TimetableScreen(),
                                 ),
-                              ],
+                              );
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: AppTheme.cardSurface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: AppTheme.cardBorder),
+                                boxShadow: AppTheme.cardShadow,
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.calendar_month_outlined,
+                                color: AppTheme.primaryAccent,
+                                size: 20,
+                              ),
                             ),
                           ),
                         ),
@@ -218,18 +208,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         width: 1,
                       ),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: [
+                      children: const [
                         Text('✈️', style: TextStyle(fontSize: 12)),
                         SizedBox(width: 6),
-                        Text(
-                          'Airplane Mode Ready · Zero Cloud Sync',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.trustPillText,
-                            letterSpacing: -0.2,
+                        Flexible(
+                          child: Text(
+                            'Airplane Mode Ready · Zero Cloud Sync',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.trustPillText,
+                              letterSpacing: -0.2,
+                            ),
                           ),
                         ),
                       ],
@@ -255,7 +249,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         pillBg: AppTheme.detectedPillFill,
                         pillTextColor: AppTheme.detectedPillText,
                         onTap: () =>
-                            widget.onNavigateTab(3), // Navigate to Tasks
+                            widget.onNavigateTab(96), // Navigate to Tasks
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -328,28 +322,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
 
-            // 4. Section: Today's Classes
+            // 3.5 Live Recording Banner (if active)
+            if (_recordingService.isRecordingNow)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                  child: _buildActiveLiveRecordingCard(
+                      _recordingService.activeRecording!),
+                ),
+              ),
+
+            // 4. Section: Today's Classes (Dynamic from Timetable)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Today\'s Classes',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        color: AppTheme.textPrimary,
+                    Expanded(
+                      child: Text(
+                        'Today\'s Classes (${_timetableService.getTodayDayOfWeek()})',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.4,
+                          color: AppTheme.textPrimary,
+                        ),
                       ),
                     ),
-                    Text(
-                      '${_todayClasses.length} Scheduled',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.textSecondary,
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TimetableScreen(),
+                          ),
+                        );
+                      },
+                      child: Text(
+                        '${_timetableService.getTodayClasses().length} Scheduled →',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.primaryAccent,
+                        ),
                       ),
                     ),
                   ],
@@ -357,19 +375,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
 
-            SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final item = _todayClasses[index];
-                  return Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-                    child: _buildClassCard(item),
-                  );
-                },
-                childCount: _todayClasses.length,
+            if (_timetableService.getTodayClasses().isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: AppTheme.cardDecoration,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.event_busy_outlined,
+                            color: AppTheme.textSecondary, size: 24),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'No classes scheduled for today.',
+                            style: TextStyle(
+                                fontSize: 13, color: AppTheme.textSecondary),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const TimetableScreen()),
+                            );
+                          },
+                          child: const Text('Add Class',
+                              style: TextStyle(color: AppTheme.primaryAccent)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final item = _timetableService.getTodayClasses()[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 5),
+                      child: _buildTimetableClassCard(item),
+                    );
+                  },
+                  childCount: _timetableService.getTodayClasses().length,
+                ),
               ),
-            ),
+
+            // 4.5 Recently Recorded Lecture Card
+            if (_recordingService.latestRecording != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                  child: _buildRecentLectureCard(
+                      _recordingService.latestRecording!),
+                ),
+              ),
 
             // 5. Section: Revision Card (Dark #1E1D19 Contrast Card)
             SliverToBoxAdapter(
@@ -396,7 +461,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     InkWell(
-                      onTap: () => widget.onNavigateTab(3), // Tasks tab
+                      onTap: () => widget.onNavigateTab(96), // Tasks screen
                       borderRadius: BorderRadius.circular(6),
                       child: const Padding(
                         padding:
@@ -497,35 +562,158 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildClassCard(ClassScheduleItem item) {
+  Widget _buildActiveLiveRecordingCard(LectureRecording active) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.cardSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: Colors.redAccent.withValues(alpha: 0.6), width: 1.5),
+        boxShadow: AppTheme.cardShadow,
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.fiber_manual_record,
+                color: Colors.redAccent, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Text(
+                      'RECORDING NOW',
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  active.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                Text(
+                  '${active.scheduledStart} - ${active.scheduledEnd} • Auto-recording lecture',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 11.5, color: AppTheme.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          OutlinedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const LecturesHistoryScreen()),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.redAccent,
+              side: const BorderSide(color: Colors.redAccent),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('View',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimetableClassCard(TimetableEntry item) {
+    final now = DateTime.now();
+    final currentHourDouble = now.hour + (now.minute / 60.0);
+    final isHappeningNow = currentHourDouble >= item.startHourDouble &&
+        currentHourDouble <= item.endHourDouble;
+    final isPast = currentHourDouble > item.endHourDouble;
+    final startDiffMinutes =
+        ((item.startHourDouble - currentHourDouble) * 60).round();
+
+    String statusText;
+    Color statusBg;
+    Color statusFg;
+
+    if (isHappeningNow) {
+      statusText =
+          _recordingService.isRecordingNow ? '🔴 Recording' : 'Happening now';
+      statusBg = AppTheme.detectedPillFill;
+      statusFg = AppTheme.primaryAccent;
+    } else if (isPast) {
+      statusText = 'Completed';
+      statusBg = AppTheme.neutralPillFill;
+      statusFg = AppTheme.textSecondary;
+    } else if (startDiffMinutes <= 60 && startDiffMinutes > 0) {
+      statusText = 'In $startDiffMinutes min';
+      statusBg = AppTheme.trustPillFill;
+      statusFg = AppTheme.trustPillText;
+    } else {
+      statusText = 'Upcoming';
+      statusBg = AppTheme.neutralPillFill;
+      statusFg = AppTheme.textSecondary;
+    }
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: AppTheme.cardDecoration,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Class icon / mic button
+          // Class icon / action button
           InkWell(
-            onTap: () => widget.onNavigateTab(1), // Live Capture
+            onTap: () {
+              if (isHappeningNow && !_recordingService.isRecordingNow) {
+                _recordingService.startClassRecording(entry: item);
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TimetableScreen()),
+                );
+              }
+            },
             borderRadius: BorderRadius.circular(12),
             child: Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: item.isReadyToRecord
+                color: isHappeningNow
                     ? AppTheme.detectedPillFill
                     : AppTheme.neutralPillFill,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: item.isReadyToRecord
+                  color: isHappeningNow
                       ? AppTheme.primaryAccent.withValues(alpha: 0.3)
                       : AppTheme.cardBorder,
                   width: 1,
                 ),
               ),
               child: Icon(
-                item.isReadyToRecord ? Icons.mic : Icons.school_outlined,
-                color: item.isReadyToRecord
+                isHappeningNow ? Icons.mic : Icons.school_outlined,
+                color: isHappeningNow
                     ? AppTheme.primaryAccent
                     : AppTheme.textSecondary,
                 size: 20,
@@ -542,31 +730,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      item.code,
+                      item.type.toUpperCase(),
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.primaryAccent,
-                        letterSpacing: 0.2,
+                        letterSpacing: 0.5,
                       ),
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: item.isReadyToRecord
-                            ? AppTheme.detectedPillFill
-                            : AppTheme.neutralPillFill,
+                        color: statusBg,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        item.status,
+                        statusText,
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: item.isReadyToRecord
-                              ? AppTheme.detectedPillText
-                              : AppTheme.textSecondary,
+                          color: statusFg,
                         ),
                       ),
                     ),
@@ -574,7 +758,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  item.name,
+                  item.subject,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -589,11 +773,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     Flexible(
                       child: Text(
-                        '${item.time} • ${item.room}',
+                        '${item.startTime} – ${item.endTime}${item.room != null ? ' • ${item.room}' : ''}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 11,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w500,
                           color: AppTheme.textSecondary,
                         ),
@@ -604,6 +788,90 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentLectureCard(LectureRecording lecture) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.cardSurface,
+        borderRadius: BorderRadius.circular(16),
+        border:
+            Border.all(color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
+        boxShadow: AppTheme.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.history_edu,
+                      size: 18, color: AppTheme.primaryAccent),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'RECENTLY RECORDED',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                      color: AppTheme.primaryAccent,
+                    ),
+                  ),
+                ],
+              ),
+              InkWell(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const LecturesHistoryScreen()),
+                  );
+                },
+                child: const Text(
+                  'My Lectures →',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primaryAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            lecture.subject,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${lecture.formattedDuration} • Status: ${lecture.transcriptionStatus}',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          if (lecture.summary != null &&
+              lecture.summary!.keyPoints.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Key takeaway: "${lecture.summary!.keyPoints.first}"',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/deadline.dart';
+import '../services/lecture_recording_service.dart';
 import '../services/stt_service.dart';
 import '../services/deadline_service.dart';
 import '../theme/app_theme.dart';
+import 'lectures_history_screen.dart';
 
 class VoiceNotesScreen extends StatefulWidget {
   final Function(int, {String? initialQuery}) onNavigateToBrain;
@@ -28,14 +30,6 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-
-  // Demo fallback transcription snippet to showcase highlighting when idle
-  final String _samplePreviousText =
-      "Okay class, for Peterson's algorithm review, make sure you understand mutual exclusion and progress requirements. ";
-  final String _sampleDeadlinePhrase =
-      'Please submit OS Lab 2 by Friday at 5 PM on the portal.';
-  final String _sampleTrailingText =
-      ' Next Tuesday we will start Chapter 6 on CPU scheduling algorithms.';
 
   @override
   void initState() {
@@ -93,16 +87,18 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
   }
 
   void _inspectTextForDeadlines(String text) {
-    final effectiveText = text.trim().isNotEmpty
-        ? text
-        : '$_samplePreviousText$_sampleDeadlinePhrase$_sampleTrailingText';
+    if (text.trim().isEmpty) {
+      _detectedPhrase = null;
+      _detectedDeadline = null;
+      return;
+    }
 
     final triggerPattern = RegExp(
       r'([^.\n]*?(?:submit|due|deadline|homework|lab|assignment|by\s+[A-Za-z]+|at\s+\d+)[^.\n]*?\.)',
       caseSensitive: false,
     );
 
-    final match = triggerPattern.firstMatch(effectiveText);
+    final match = triggerPattern.firstMatch(text);
     if (match != null) {
       final phrase = match.group(0)?.trim();
       if (phrase != null && phrase != _detectedPhrase) {
@@ -159,7 +155,8 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
       dueDate: _detectedDeadline!.dueDate,
       priority: _detectedDeadline!.priority,
       isSpokenDetected: true,
-      audioTimestamp: _formatDuration(_elapsedSeconds > 0 ? _elapsedSeconds : 148),
+      audioTimestamp:
+          _formatDuration(_elapsedSeconds > 0 ? _elapsedSeconds : 148),
       sourceLocation: 'Lecture 3 Audio',
     );
 
@@ -200,12 +197,8 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
 
   @override
   Widget build(BuildContext context) {
-    final hasRealTranscription = _sttService.transcription.trim().isNotEmpty;
-    final displayPrevious = hasRealTranscription ? '' : _samplePreviousText;
-    final displayHighlight = hasRealTranscription
-        ? (_detectedPhrase ?? _sttService.transcription)
-        : _sampleDeadlinePhrase;
-    final displayUpcoming = hasRealTranscription ? '' : _sampleTrailingText;
+    final transcription = _sttService.transcription.trim();
+    final hasRealTranscription = transcription.isNotEmpty;
 
     return Scaffold(
       backgroundColor: AppTheme.canvasBg,
@@ -252,6 +245,17 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.history_edu, color: AppTheme.primaryAccent),
+            tooltip: 'My Recorded Lectures',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const LecturesHistoryScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.audio_file_outlined,
                 color: AppTheme.primaryAccent),
             tooltip: 'Import WAV File',
@@ -278,6 +282,52 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (LectureRecordingService.instance.isRecordingNow) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: Colors.redAccent.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.fiber_manual_record,
+                          color: Colors.redAccent, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Auto-recording active: ${LectureRecordingService.instance.activeRecording?.subject}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const LecturesHistoryScreen()),
+                          );
+                        },
+                        child: const Text(
+                          'View →',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.redAccent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 6),
               Container(
                 padding:
@@ -382,59 +432,94 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                   decoration: AppTheme.cardDecoration,
                   child: Stack(
                     children: [
-                      SingleChildScrollView(
-                        child: RichText(
-                          text: TextSpan(
-                            style: const TextStyle(
-                              fontSize: 16,
-                              height: 1.65,
-                              fontFamily: 'serif',
-                              color: AppTheme.textPrimary,
-                            ),
+                      if (!hasRealTranscription)
+                        const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              if (displayPrevious.isNotEmpty)
-                                TextSpan(
-                                  text: displayPrevious,
-                                  style: const TextStyle(
-                                    color: AppTheme.textInactive,
-                                    fontFamily: 'serif',
-                                  ),
+                              Icon(Icons.mic_none_outlined,
+                                  size: 40, color: AppTheme.textInactive),
+                              SizedBox(height: 12),
+                              Text(
+                                'No speech transcribed yet',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.textPrimary,
                                 ),
-                              if (displayHighlight.isNotEmpty)
-                                WidgetSpan(
-                                  alignment: PlaceholderAlignment.baseline,
-                                  baseline: TextBaseline.alphabetic,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 4, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: AppTheme.highlightBg,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      displayHighlight,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        height: 1.65,
-                                        fontFamily: 'serif',
-                                        fontWeight: FontWeight.w600,
-                                        color: AppTheme.textPrimary,
-                                      ),
-                                    ),
-                                  ),
+                              ),
+                              SizedBox(height: 6),
+                              Text(
+                                'Tap the microphone button below to record live audio or import a WAV file.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.textSecondary,
                                 ),
-                              if (displayUpcoming.isNotEmpty)
-                                TextSpan(
-                                  text: displayUpcoming,
-                                  style: const TextStyle(
-                                    color: AppTheme.textPrimary,
-                                    fontFamily: 'serif',
-                                  ),
-                                ),
+                              ),
                             ],
                           ),
+                        )
+                      else
+                        SingleChildScrollView(
+                          child: Builder(builder: (context) {
+                            final phrase = _detectedPhrase;
+                            if (phrase != null &&
+                                transcription.contains(phrase)) {
+                              final pIdx = transcription.indexOf(phrase);
+                              final before = transcription.substring(0, pIdx);
+                              final after =
+                                  transcription.substring(pIdx + phrase.length);
+                              return RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    height: 1.65,
+                                    fontFamily: 'serif',
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                  children: [
+                                    if (before.isNotEmpty)
+                                      TextSpan(text: before),
+                                    WidgetSpan(
+                                      alignment: PlaceholderAlignment.baseline,
+                                      baseline: TextBaseline.alphabetic,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.highlightBg,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          phrase,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            height: 1.65,
+                                            fontFamily: 'serif',
+                                            fontWeight: FontWeight.w600,
+                                            color: AppTheme.textPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    if (after.isNotEmpty) TextSpan(text: after),
+                                  ],
+                                ),
+                              );
+                            }
+                            return Text(
+                              transcription,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                height: 1.65,
+                                fontFamily: 'serif',
+                                color: AppTheme.textPrimary,
+                              ),
+                            );
+                          }),
                         ),
-                      ),
                       if (_detectedDeadline != null && !_taskSaved)
                         Positioned(
                           right: 4,
@@ -451,7 +536,8 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                                   color: AppTheme.cardSurface,
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
-                                      color: AppTheme.primaryAccent, width: 1.2),
+                                      color: AppTheme.primaryAccent,
+                                      width: 1.2),
                                   boxShadow: AppTheme.cardShadow,
                                 ),
                                 child: const Row(
@@ -496,7 +582,8 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                       Container(
                         padding: const EdgeInsets.all(7),
                         decoration: BoxDecoration(
-                          color: AppTheme.detectedPillText.withValues(alpha: 0.12),
+                          color:
+                              AppTheme.detectedPillText.withValues(alpha: 0.12),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -551,8 +638,8 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                             minimumSize: Size.zero,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
-                              side: const BorderSide(
-                                  color: AppTheme.cardBorder),
+                              side:
+                                  const BorderSide(color: AppTheme.cardBorder),
                             ),
                           ),
                           child: const Text(

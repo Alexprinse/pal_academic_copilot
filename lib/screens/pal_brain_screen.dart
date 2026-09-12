@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/chat_message.dart';
 import '../models/llm_model_preset.dart';
 import '../models/vault_item.dart';
@@ -31,6 +33,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   final List<AcademicChatMessage> _messages = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+
+  String? _copiedMessageId;
+  final Set<String> _likedMessageIds = <String>{};
+  final Set<String> _dislikedMessageIds = <String>{};
 
   String _selectedRagScope = 'Unit 1 (OS)'; // 'Off', 'All Notes', 'Unit 1 (OS)'
 
@@ -85,15 +91,22 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
   Future<void> _toggleVoiceRecording() async {
     if (_sttService.isRecording) {
-      final transcribed = await _sttService.stopRecording(
-        defaultFallback:
-            'Explain process synchronization and Peterson\'s algorithm in Operating Systems.',
-      );
-      if (transcribed.isNotEmpty && mounted) {
+      final transcribed = await _sttService.stopRecording();
+      if (transcribed.isNotEmpty &&
+          transcribed != 'No speech detected in recording.' &&
+          !transcribed.startsWith("Couldn't transcribe") &&
+          mounted) {
         setState(() {
           _inputController.text = transcribed;
         });
         _scrollToBottom();
+      } else if (transcribed.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(transcribed),
+            duration: const Duration(seconds: 2),
+          ),
+        );
       }
     } else {
       try {
@@ -118,6 +131,18 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     }
     _inputController.text = query;
     _sendMessage();
+  }
+
+  @visibleForTesting
+  void addMessageForTesting(AcademicChatMessage message) {
+    setState(() {
+      _messages.add(message);
+    });
+  }
+
+  @visibleForTesting
+  void showModelSwitcherForTesting() {
+    _showModelSwitcherModal();
   }
 
   Future<void> _sendMessage() async {
@@ -420,7 +445,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 6, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: AppTheme.cyanAccent
+                                              color: AppTheme.primaryAccent
                                                   .withValues(alpha: 0.12),
                                               borderRadius:
                                                   BorderRadius.circular(4),
@@ -430,10 +455,50 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                                               style: const TextStyle(
                                                 fontSize: 10,
                                                 fontWeight: FontWeight.bold,
-                                                color: AppTheme.cyanAccent,
+                                                color: AppTheme.primaryAccent,
                                               ),
                                             ),
                                           ),
+                                          if (_llmService
+                                              .isDefaultModel(preset.id)) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: AppTheme.highlightBg,
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                                border: Border.all(
+                                                  color: AppTheme.primaryAccent
+                                                      .withValues(alpha: 0.5),
+                                                ),
+                                              ),
+                                              child: const Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.star,
+                                                      size: 10,
+                                                      color: AppTheme
+                                                          .primaryAccent),
+                                                  SizedBox(width: 3),
+                                                  Text(
+                                                    'DEFAULT',
+                                                    style: TextStyle(
+                                                      fontSize: 9,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: AppTheme
+                                                          .primaryAccent,
+                                                      letterSpacing: 0.4,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     ),
@@ -601,113 +666,188 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                                             color: AppTheme.textMuted,
                                           ),
                                         ),
-
-                                      // Buttons
-                                      Row(
-                                        children: [
-                                          if (isDownloaded || isLoaded) ...[
-                                            if (isActive && isLoaded) ...[
-                                              OutlinedButton(
-                                                style: OutlinedButton.styleFrom(
-                                                  foregroundColor:
-                                                      AppTheme.amberAccent,
-                                                  side: const BorderSide(
-                                                      color:
-                                                          AppTheme.amberAccent,
-                                                      width: 0.8),
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 6),
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                ),
-                                                onPressed: () async {
-                                                  await _llmService
-                                                      .unloadModel();
-                                                  setModalState(() {});
-                                                },
-                                                child: const Text(
-                                                  'UNLOAD RAM',
-                                                  style: TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 10),
-                                                ),
-                                              ),
-                                            ] else ...[
-                                              ElevatedButton(
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor:
-                                                      AppTheme.cyanAccent,
-                                                  foregroundColor: Colors.black,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 12,
-                                                      vertical: 6),
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                ),
-                                                onPressed: () async {
-                                                  await _llmService
-                                                      .loadModel(preset);
-                                                  setModalState(() {});
-                                                },
-                                                child: const Text(
-                                                  'LOAD MODEL',
-                                                  style: TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 10),
+                                      if (_llmService.isDefaultModel(preset.id))
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.highlightBg,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: AppTheme.primaryAccent
+                                                  .withValues(alpha: 0.4),
+                                            ),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.star,
+                                                  size: 11,
+                                                  color:
+                                                      AppTheme.primaryAccent),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Default Model',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppTheme.primaryAccent,
                                                 ),
                                               ),
                                             ],
-                                            const SizedBox(width: 6),
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.delete_outline,
-                                                  size: 18,
-                                                  color: AppTheme.redAccent),
-                                              tooltip:
-                                                  'Delete GGUF file from phone',
-                                              onPressed: () async {
-                                                await _llmService
-                                                    .deleteModel(preset);
-                                                setModalState(() {});
-                                              },
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  // Action Buttons Row
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      if (!_llmService
+                                          .isDefaultModel(preset.id)) ...[
+                                        OutlinedButton.icon(
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor:
+                                                AppTheme.primaryAccent,
+                                            side: const BorderSide(
+                                                color: AppTheme.cardBorder),
+                                            backgroundColor: AppTheme.canvasBg,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 4),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                             ),
-                                          ] else ...[
-                                            ElevatedButton.icon(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor:
-                                                    AppTheme.surfaceDark,
-                                                foregroundColor:
-                                                    AppTheme.cyanAccent,
-                                                side: const BorderSide(
-                                                    color: AppTheme.cyanAccent),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 6),
-                                                visualDensity:
-                                                    VisualDensity.compact,
+                                          ),
+                                          icon: const Icon(Icons.star_outline,
+                                              size: 13),
+                                          label: const Text(
+                                            'Set Default',
+                                            style: TextStyle(
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          onPressed: () async {
+                                            await _llmService
+                                                .setDefaultModel(preset.id);
+                                            setModalState(() {});
+                                            if (!context.mounted) return;
+                                            ScaffoldMessenger.of(context)
+                                                .clearSnackBars();
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  preset.status ==
+                                                          ModelStatus.downloaded
+                                                      ? "${preset.name} set as default model (auto-loads on launch)."
+                                                      : "${preset.name} set as default model. Download it to auto-load on launch.",
+                                                ),
+                                                duration:
+                                                    const Duration(seconds: 2),
+                                                behavior:
+                                                    SnackBarBehavior.floating,
                                               ),
-                                              icon: const Icon(Icons.download,
-                                                  size: 13),
-                                              label: const Text('DOWNLOAD GGUF',
-                                                  style: TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 10)),
-                                              onPressed: () async {
-                                                await _llmService
-                                                    .downloadModel(preset);
-                                                setModalState(() {});
-                                              },
+                                            );
+                                          },
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      if (isDownloaded || isLoaded) ...[
+                                        if (isActive && isLoaded) ...[
+                                          OutlinedButton(
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor:
+                                                  AppTheme.primaryAccent,
+                                              side: const BorderSide(
+                                                  color: AppTheme.primaryAccent,
+                                                  width: 0.8),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 6),
+                                              visualDensity:
+                                                  VisualDensity.compact,
                                             ),
-                                          ],
+                                            onPressed: () async {
+                                              await _llmService.unloadModel();
+                                              setModalState(() {});
+                                            },
+                                            child: const Text(
+                                              'UNLOAD RAM',
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 10),
+                                            ),
+                                          ),
+                                        ] else ...[
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor:
+                                                  AppTheme.primaryAccent,
+                                              foregroundColor: Colors.white,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 6),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                            onPressed: () async {
+                                              await _llmService
+                                                  .loadModel(preset);
+                                              setModalState(() {});
+                                            },
+                                            child: const Text(
+                                              'LOAD MODEL',
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 10),
+                                            ),
+                                          ),
                                         ],
-                                      ),
+                                        const SizedBox(width: 6),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline,
+                                              size: 18,
+                                              color: AppTheme.overduePillText),
+                                          tooltip:
+                                              'Delete GGUF file from phone',
+                                          onPressed: () async {
+                                            await _llmService
+                                                .deleteModel(preset);
+                                            setModalState(() {});
+                                          },
+                                        ),
+                                      ] else ...[
+                                        ElevatedButton.icon(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                AppTheme.primaryAccent,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 6),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                          ),
+                                          icon: const Icon(Icons.download,
+                                              size: 13),
+                                          label: const Text('DOWNLOAD GGUF',
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 10)),
+                                          onPressed: () async {
+                                            await _llmService
+                                                .downloadModel(preset);
+                                            setModalState(() {});
+                                          },
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ],
@@ -858,6 +998,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.canvasBg,
       appBar: AppBar(
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -871,7 +1012,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.tune, color: AppTheme.cyanAccent),
+            icon: const Icon(Icons.tune, color: AppTheme.primaryAccent),
             tooltip: 'Model Presets & Switcher',
             onPressed: _showModelSwitcherModal,
           ),
@@ -912,7 +1053,12 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: AppTheme.surfaceDark,
+      decoration: const BoxDecoration(
+        color: AppTheme.cardSurface,
+        border: Border(
+          bottom: BorderSide(color: AppTheme.cardBorder, width: 0.5),
+        ),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -920,7 +1066,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             child: Row(
               children: [
                 const Icon(Icons.developer_board,
-                    size: 16, color: AppTheme.cyanAccent),
+                    size: 16, color: AppTheme.primaryAccent),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Column(
@@ -928,9 +1074,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        active != null
+                        _llmService.isModelLoaded && active != null
                             ? '${active.name} (${active.quant})'
-                            : 'No Model Loaded',
+                            : 'No Model Loaded · Default: ${_llmService.defaultPreset?.name ?? "Llama 3.2 1B"}',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 12,
@@ -956,10 +1102,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AppTheme.amberAccent.withValues(alpha: 0.15),
+                color: AppTheme.detectedPillFill,
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
-                    color: AppTheme.amberAccent.withValues(alpha: 0.4)),
+                    color: AppTheme.primaryAccent.withValues(alpha: 0.4)),
               ),
               child: Row(
                 children: [
@@ -967,7 +1113,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     width: 10,
                     height: 10,
                     child: CircularProgressIndicator(
-                        strokeWidth: 1.5, color: AppTheme.amberAccent),
+                        strokeWidth: 1.5, color: AppTheme.primaryAccent),
                   ),
                   const SizedBox(width: 6),
                   Text(
@@ -975,7 +1121,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: AppTheme.amberAccent,
+                      color: AppTheme.detectedPillText,
                     ),
                   ),
                 ],
@@ -985,13 +1131,13 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AppTheme.greenAccent.withValues(alpha: 0.12),
+                color: AppTheme.trustPillFill,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Row(
                 children: [
                   const Icon(Icons.flash_on,
-                      size: 12, color: AppTheme.greenAccent),
+                      size: 12, color: AppTheme.trustPillText),
                   const SizedBox(width: 4),
                   Text(
                     _llmService.isGenerating
@@ -1000,7 +1146,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
-                      color: AppTheme.greenAccent,
+                      color: AppTheme.trustPillText,
                     ),
                   ),
                 ],
@@ -1016,7 +1162,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: const BoxDecoration(
-        color: AppTheme.bgDark,
+        color: AppTheme.canvasBg,
         border:
             Border(bottom: BorderSide(color: AppTheme.cardBorder, width: 0.5)),
       ),
@@ -1038,6 +1184,21 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     child: FilterChip(
                       label: Text(scope, style: const TextStyle(fontSize: 11)),
                       selected: isSelected,
+                      selectedColor: AppTheme.highlightBg,
+                      backgroundColor: AppTheme.neutralPillFill,
+                      side: BorderSide(
+                        color: isSelected
+                            ? AppTheme.primaryAccent
+                            : AppTheme.cardBorder,
+                      ),
+                      labelStyle: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color: isSelected
+                            ? AppTheme.primaryAccent
+                            : AppTheme.textPrimary,
+                      ),
                       onSelected: (val) {
                         if (val) setState(() => _selectedRagScope = scope);
                       },
@@ -1054,162 +1215,612 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
   Widget _buildChatBubble(AcademicChatMessage msg) {
     if (msg.isUser) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 12, left: 48),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: AppTheme.cyanAccent.withValues(alpha: 0.15),
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(16),
-              topRight: Radius.circular(16),
-              bottomLeft: Radius.circular(16),
-            ),
-            border:
-                Border.all(color: AppTheme.cyanAccent.withValues(alpha: 0.3)),
-          ),
-          child: Text(
-            msg.text,
-            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-          ),
-        ),
-      );
+      return _buildUserMessage(msg);
     }
+    return _buildAssistantMessage(msg);
+  }
+
+  Widget _buildUserMessage(AcademicChatMessage msg) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16, left: 52),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppTheme.highlightBg,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18),
+            topRight: Radius.circular(18),
+            bottomLeft: Radius.circular(18),
+            bottomRight: Radius.circular(4),
+          ),
+          border:
+              Border.all(color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
+          boxShadow: AppTheme.cardShadow,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              msg.text,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 14.5,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _formatTime(msg.timestamp),
+              style: const TextStyle(
+                fontSize: 10,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAssistantMessage(AcademicChatMessage msg) {
+    final isCopied = _copiedMessageId == msg.id;
+    final isLiked = _likedMessageIds.contains(msg.id);
+    final isDisliked = _dislikedMessageIds.contains(msg.id);
 
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14, right: 24),
+        margin: const EdgeInsets.only(bottom: 18),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppTheme.cardDark,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomRight: Radius.circular(16),
-          ),
+          color: AppTheme.cardSurface,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppTheme.cardBorder),
+          boxShadow: AppTheme.cardShadow,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 1. Header: Avatar + Copilot Title + Speed badge
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.psychology,
-                        size: 16, color: AppTheme.cyanAccent),
-                    SizedBox(width: 6),
-                    Text(
-                      'Pal On-Device Brain',
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: AppTheme.highlightBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppTheme.primaryAccent.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.psychology,
+                          size: 16,
+                          color: AppTheme.primaryAccent,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Pal Academic Copilot',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: AppTheme.cyanAccent,
+                        fontSize: 13,
+                        color: AppTheme.textPrimary,
                       ),
                     ),
                   ],
                 ),
                 if (msg.tokensPerSecond != null && msg.tokensPerSecond! > 0)
-                  Text(
-                    '${msg.tokensPerSecond!.toStringAsFixed(1)} tok/s',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.greenAccent,
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.trustPillFill,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppTheme.trustPillText.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.bolt,
+                            size: 11, color: AppTheme.trustPillText),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${msg.tokensPerSecond!.toStringAsFixed(1)} tok/s',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.trustPillText,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              msg.text.isEmpty && msg.isGenerating
-                  ? 'Generating on-device tokens...'
-                  : msg.text,
-              style: const TextStyle(
-                color: AppTheme.textPrimary,
-                fontSize: 14,
-                height: 1.45,
-              ),
-            ),
+            const SizedBox(height: 12),
 
-            // Expandable Sources & Citations Card
-            if (msg.citations.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceDark,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.cardBorder),
-                ),
-                child: Theme(
-                  data: Theme.of(context)
-                      .copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-                    childrenPadding:
-                        const EdgeInsets.only(left: 12, right: 12, bottom: 10),
-                    leading: const Icon(Icons.bookmark_added,
-                        size: 16, color: AppTheme.amberAccent),
-                    title: Text(
-                      '${msg.citations.length} Verified Sources & Citations',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.amberAccent,
+            // 2. Body: Markdown response or loading state
+            if (msg.text.isEmpty && msg.isGenerating)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: const [
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppTheme.primaryAccent,
                       ),
                     ),
-                    children: msg.citations.map((c) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  '• ${c.chunk.documentName} (p. ${c.chunk.pageNumber})',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                    color: AppTheme.cyanAccent,
-                                  ),
-                                ),
-                                Text(
-                                  'BM25 Score: ${c.score.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: AppTheme.textMuted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              c.chunk.text,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppTheme.textSecondary,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
+                    SizedBox(width: 10),
+                    Text(
+                      'Formulating on-device response...',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              MarkdownBody(
+                data: msg.text,
+                selectable: true,
+                styleSheet: MarkdownStyleSheet(
+                  p: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    height: 1.55,
+                  ),
+                  h1: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    height: 1.35,
+                  ),
+                  h2: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    height: 1.35,
+                  ),
+                  h3: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.bold,
+                    height: 1.35,
+                  ),
+                  strong: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  em: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  blockquote: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontStyle: FontStyle.italic,
+                    fontSize: 13.5,
+                  ),
+                  blockquoteDecoration: BoxDecoration(
+                    color: AppTheme.neutralPillFill.withValues(alpha: 0.5),
+                    border: const Border(
+                      left: BorderSide(
+                        color: AppTheme.primaryAccent,
+                        width: 3,
+                      ),
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  code: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                    backgroundColor: Colors.transparent,
+                  ),
+                  codeblockDecoration: BoxDecoration(
+                    color: AppTheme.neutralPillFill,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  listBullet: const TextStyle(
+                    color: AppTheme.primaryAccent,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
+
+            // 3. Citations Chips (if any)
+            if (msg.citations.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Divider(height: 1, color: AppTheme.cardBorder),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.verified_outlined,
+                      size: 13, color: AppTheme.trustPillText),
+                  const SizedBox(width: 5),
+                  Text(
+                    '${msg.citations.length} Vault Sources Used:',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: msg.citations
+                    .map((c) => _buildCitationChip(context, c))
+                    .toList(),
+              ),
             ],
+
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: AppTheme.cardBorder),
+            const SizedBox(height: 8),
+
+            // 4. Action Row: Copy, Feedback, More Options, Timestamp
+            Row(
+              children: [
+                // Copy Action
+                InkWell(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: msg.text));
+                    setState(() => _copiedMessageId = msg.id);
+                    Future.delayed(const Duration(seconds: 2), () {
+                      if (mounted && _copiedMessageId == msg.id) {
+                        setState(() => _copiedMessageId = null);
+                      }
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isCopied ? Icons.check : Icons.copy_outlined,
+                          size: 14,
+                          color: isCopied
+                              ? AppTheme.trustPillText
+                              : AppTheme.textSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          isCopied ? 'Copied' : 'Copy',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: isCopied
+                                ? AppTheme.trustPillText
+                                : AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+
+                // Thumbs Up
+                IconButton(
+                  iconSize: 15,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(),
+                  icon: Icon(
+                    isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
+                    color: isLiked
+                        ? AppTheme.primaryAccent
+                        : AppTheme.textSecondary,
+                  ),
+                  tooltip: 'Helpful',
+                  onPressed: () {
+                    setState(() {
+                      if (isLiked) {
+                        _likedMessageIds.remove(msg.id);
+                      } else {
+                        _likedMessageIds.add(msg.id);
+                        _dislikedMessageIds.remove(msg.id);
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(width: 4),
+
+                // Thumbs Down
+                IconButton(
+                  iconSize: 15,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(),
+                  icon: Icon(
+                    isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
+                    color: isDisliked
+                        ? AppTheme.overduePillText
+                        : AppTheme.textSecondary,
+                  ),
+                  tooltip: 'Not helpful',
+                  onPressed: () {
+                    setState(() {
+                      if (isDisliked) {
+                        _dislikedMessageIds.remove(msg.id);
+                      } else {
+                        _dislikedMessageIds.add(msg.id);
+                        _likedMessageIds.remove(msg.id);
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(width: 4),
+
+                // More Options Menu
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert,
+                      size: 15, color: AppTheme.textSecondary),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (val) {
+                    if (val == 'copy') {
+                      Clipboard.setData(ClipboardData(text: msg.text));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Response copied to clipboard'),
+                          duration: Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    } else if (val == 'regenerate') {
+                      _regenerateResponse(msg);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(
+                      value: 'copy',
+                      child: Row(
+                        children: [
+                          Icon(Icons.content_copy,
+                              size: 16, color: AppTheme.textPrimary),
+                          SizedBox(width: 8),
+                          Text('Copy text', style: TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'regenerate',
+                      child: Row(
+                        children: [
+                          Icon(Icons.refresh,
+                              size: 16, color: AppTheme.primaryAccent),
+                          SizedBox(width: 8),
+                          Text('Regenerate response',
+                              style: TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                const Spacer(),
+
+                // Timestamp
+                Text(
+                  _formatTime(msg.timestamp),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildCitationChip(BuildContext context, ChunkMatch match) {
+    return InkWell(
+      onTap: () => _showCitationModal(context, match),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: AppTheme.neutralPillFill,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.cardBorder),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.menu_book,
+                size: 12, color: AppTheme.primaryAccent),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                '${match.chunk.documentName} · p.${match.chunk.pageNumber}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.textPrimary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCitationModal(BuildContext context, ChunkMatch match) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cardBorder,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.menu_book,
+                        size: 18, color: AppTheme.primaryAccent),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        match.chunk.documentName,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppTheme.detectedPillFill,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Page ${match.chunk.pageNumber}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.detectedPillText,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${match.chunk.subject} • ${match.chunk.unit} • BM25 Score: ${match.score.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'VERIFIED SOURCE EXCERPT',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                    color: AppTheme.textInactive,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.neutralPillFill.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: Text(
+                    match.chunk.text,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.5,
+                      color: AppTheme.textPrimary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.copy,
+                        size: 14, color: AppTheme.primaryAccent),
+                    label: const Text(
+                      'Copy Citation Excerpt',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.primaryAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: match.chunk.text));
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).clearSnackBars();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Citation excerpt copied to clipboard'),
+                          duration: Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _regenerateResponse(AcademicChatMessage assistantMsg) {
+    final idx = _messages.indexOf(assistantMsg);
+    if (idx <= 0) return;
+    final priorUserMsg = _messages[idx - 1];
+    if (!priorUserMsg.isUser) return;
+    _inputController.text = priorUserMsg.text;
+    _sendMessage();
+  }
+
+  String _formatTime(DateTime dt) {
+    final hour = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period';
   }
 
   Widget _buildInputBar() {
@@ -1219,7 +1830,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
-        color: AppTheme.surfaceDark,
+        color: AppTheme.cardSurface,
         border: Border(top: BorderSide(color: AppTheme.cardBorder)),
       ),
       child: SafeArea(
@@ -1238,26 +1849,28 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                   color: AppTheme.overduePillFill,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                      color: AppTheme.redAccent.withValues(alpha: 0.3)),
+                      color: AppTheme.overduePillText.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
+                  children: const [
+                    SizedBox(
                       width: 8,
                       height: 8,
-                      decoration: const BoxDecoration(
-                        color: AppTheme.redAccent,
-                        shape: BoxShape.circle,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: AppTheme.overduePillText,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    const Text(
+                    SizedBox(width: 8),
+                    Text(
                       'Listening... Tap mic again to transcribe with On-Device Whisper',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: AppTheme.redAccent,
+                        color: AppTheme.overduePillText,
                       ),
                     ),
                   ],
@@ -1311,7 +1924,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: isRecording
-                          ? AppTheme.redAccent
+                          ? AppTheme.overduePillText
                           : AppTheme.cardBorder,
                       width: isRecording ? 1.5 : 1,
                     ),
@@ -1323,14 +1936,14 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                             height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppTheme.cyanAccent,
+                              color: AppTheme.primaryAccent,
                             ),
                           )
                         : Icon(
                             isRecording ? Icons.mic : Icons.mic_none,
                             color: isRecording
-                                ? AppTheme.redAccent
-                                : AppTheme.cyanAccent,
+                                ? AppTheme.overduePillText
+                                : AppTheme.primaryAccent,
                             size: 20,
                           ),
                     tooltip: isRecording
@@ -1347,14 +1960,38 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                     controller: _inputController,
                     minLines: 1,
                     maxLines: 4,
-                    style: const TextStyle(fontSize: 14),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textPrimary,
+                    ),
                     decoration: InputDecoration(
                       hintText: isRecording
                           ? 'Listening to your voice...'
                           : 'Ask Pal anything from your textbooks...',
+                      hintStyle: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 13.5,
+                      ),
                       isDense: true,
+                      filled: true,
+                      fillColor: AppTheme.canvasBg,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide:
+                            const BorderSide(color: AppTheme.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide:
+                            const BorderSide(color: AppTheme.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide:
+                            const BorderSide(color: AppTheme.primaryAccent),
+                      ),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
@@ -1364,7 +2001,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                 // Send to LLM Button
                 Container(
                   decoration: const BoxDecoration(
-                    color: AppTheme.cyanAccent,
+                    color: AppTheme.primaryAccent,
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
@@ -1374,10 +2011,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                             height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.black,
+                              color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.arrow_upward, color: Colors.black),
+                        : const Icon(Icons.arrow_upward, color: Colors.white),
                     onPressed: _sendMessage,
                   ),
                 ),

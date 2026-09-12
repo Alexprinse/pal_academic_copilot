@@ -1016,16 +1016,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(height: 10),
-        Material(
-          color: AppTheme.cardSurface,
-          borderRadius: BorderRadius.circular(18),
-          elevation: 0,
-          clipBehavior: Clip.antiAlias,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppTheme.cardBorder),
-            ),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppTheme.cardBorder),
+          ),
+          child: Material(
+            color: AppTheme.cardSurface,
+            borderRadius: BorderRadius.circular(18),
+            elevation: 0,
+            clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
                 // Active Model Information

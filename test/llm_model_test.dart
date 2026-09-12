@@ -3,6 +3,8 @@ import 'package:pal_academic_copilot/models/llm_model_preset.dart';
 import 'package:pal_academic_copilot/services/llm_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('LlmModelPreset & GGUF Specs', () {
     test('Default presets match hardware specification exactly', () {
       final presets = LlmModelPreset.defaultPresets;
@@ -39,6 +41,25 @@ void main() {
       expect(service.loadedModelPath, isEmpty);
       expect(service.isModelLoaded, isFalse);
       expect(service.llmStatus, contains('Freed RAM/VRAM'));
+    });
+
+    test('LlmService default model selection can be changed and queried', () async {
+      final service = LlmService.instance;
+      // Default initial model is llama3.2-1b
+      expect(service.defaultModelId, isNotEmpty);
+
+      // Change default model to qwen2.5-0.5b
+      await service.setDefaultModel('qwen2.5-0.5b', autoLoadIfDownloaded: false);
+      expect(service.defaultModelId, 'qwen2.5-0.5b');
+      expect(service.isDefaultModel('qwen2.5-0.5b'), isTrue);
+      expect(service.isDefaultModel('smollm2-135m'), isFalse);
+      expect(service.defaultPreset?.name, 'Qwen 2.5 0.5B');
+
+      // Change back to llama3.2-1b
+      await service.setDefaultModel('llama3.2-1b', autoLoadIfDownloaded: false);
+      expect(service.defaultModelId, 'llama3.2-1b');
+      expect(service.isDefaultModel('llama3.2-1b'), isTrue);
+      expect(service.defaultPreset?.name, 'Llama 3.2 1B');
     });
   });
 }

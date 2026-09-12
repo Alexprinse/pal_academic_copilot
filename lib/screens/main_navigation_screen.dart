@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'dashboard_screen.dart';
 import 'voice_notes_screen.dart';
 import 'pal_brain_screen.dart';
+import 'ocr_scanner_screen.dart';
 import 'tasks_screen.dart';
 import 'quiz_screen.dart';
 import 'study_vault_screen.dart';
 import 'profile_screen.dart';
+import 'timetable_screen.dart';
 import '../theme/app_theme.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -22,10 +24,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   void _switchTab(int index,
       {String? initialQuery, String? filterSubject, String? filterUnit}) {
-    // If index 4 requested (old vault / brain index), map appropriately
+    if (index == 96) {
+      _openTasksScreen();
+      return;
+    }
+
     int target = index;
-    if (index >= 4) {
-      target = 2; // Ask AI
+    if (index == 98) {
+      target = 4; // Vault tab
+    } else if (index > 4) {
+      target = 2; // Ask AI fallback
     }
 
     setState(() {
@@ -54,10 +62,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _openVaultModal() {
+  void _openTasksScreen() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => StudyVaultScreen(onNavigateToBrain: _switchTab),
+        builder: (_) => TasksScreen(onNavigateToTab: _switchTab),
       ),
     );
   }
@@ -70,6 +78,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  void _openTimetableScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const TimetableScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
@@ -77,16 +93,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         if (idx == 99) {
           _openQuizModal();
         } else if (idx == 98) {
-          _openVaultModal();
+          _switchTab(4); // Vault tab
         } else if (idx == 97) {
           _openProfileModal();
+        } else if (idx == 96) {
+          _openTasksScreen();
+        } else if (idx == 95) {
+          _openTimetableScreen();
         } else {
           _switchTab(idx);
         }
       }),
       VoiceNotesScreen(onNavigateToBrain: _switchTab),
       PalBrainScreen(key: _brainKey),
-      TasksScreen(onNavigateToTab: _switchTab),
+      OcrScannerScreen(onNavigateToBrain: _switchTab),
+      StudyVaultScreen(onNavigateToBrain: _switchTab),
     ];
 
     return Scaffold(
@@ -108,11 +129,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           onTap: (index) => setState(() => _currentIndex = index),
           type: BottomNavigationBarType.fixed,
           backgroundColor: AppTheme.cardSurface,
-          selectedItemColor: AppTheme.textPrimary,
+          selectedItemColor: AppTheme.primaryAccent,
           unselectedItemColor: AppTheme.textInactive,
-          selectedFontSize: 12,
-          unselectedFontSize: 12,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
+          selectedFontSize: 11.5,
+          showSelectedLabels: true,
+          showUnselectedLabels: true,
+          unselectedFontSize: 11,
+          selectedLabelStyle:
+              const TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.2),
           unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
           items: const [
             BottomNavigationBarItem(
@@ -131,9 +155,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               label: 'Ask',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.check_circle_outline),
-              activeIcon: Icon(Icons.check_circle),
-              label: 'Tasks',
+              icon: Icon(Icons.camera_alt_outlined),
+              activeIcon: Icon(Icons.camera_alt),
+              label: 'Camera',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.auto_stories_outlined),
+              activeIcon: Icon(Icons.auto_stories),
+              label: 'Vault',
             ),
           ],
         ),

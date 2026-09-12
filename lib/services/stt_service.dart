@@ -4,6 +4,27 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+import '../models/lecture_recording.dart';
+
+class WavAudioMetadata {
+  final bool isValid;
+  final String? error;
+  final int sampleRate;
+  final int numChannels;
+  final int bitsPerSample;
+  final int fileSizeBytes;
+  final double durationSeconds;
+
+  const WavAudioMetadata({
+    required this.isValid,
+    this.error,
+    this.sampleRate = 0,
+    this.numChannels = 0,
+    this.bitsPerSample = 0,
+    this.fileSizeBytes = 0,
+    this.durationSeconds = 0.0,
+  });
+}
 
 class SttService extends ChangeNotifier {
   static final SttService instance = SttService._();
@@ -37,7 +58,6 @@ class SttService extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('Error initializing Sherpa Whisper STT: $e');
-      // Even if native ONNX fails on an emulator, app remains responsive
       _isInitialized = false;
     }
   }
@@ -59,7 +79,6 @@ class SttService extends ChangeNotifier {
       final destFile = File('${modelDir.path}/$fileName');
       if (!await destFile.exists() || await destFile.length() == 0) {
         try {
-          // Attempt loading from both nested and flat asset directories
           ByteData data;
           try {
             data = await rootBundle.load(
@@ -107,7 +126,89 @@ class SttService extends ChangeNotifier {
     }
   }
 
-  Future<void> startRecording() async {
+  /// Inspect and validate that a WAV file exists and has valid 16kHz mono 16-bit PCM header
+  static Future<WavAudioMetadata> validateWavFile(String wavFilePath) async {
+    final file = File(wavFilePath);
+    if (!await file.exists()) {
+      return WavAudioMetadata(
+        isValid: false,
+        error: 'File does not exist at path: $wavFilePath',
+      );
+    }
+
+    final int size = await file.length();
+    if (size < 44) {
+      return WavAudioMetadata(
+        isValid: false,
+        error:
+            'File size ($size bytes) is smaller than standard WAV 44-byte header.',
+        fileSizeBytes: size,
+      );
+    }
+
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open(mode: FileMode.read);
+      final header = await raf.read(44);
+      if (header.length < 44) {
+        return WavAudioMetadata(
+          isValid: false,
+          error: 'Could not read full 44-byte WAV header.',
+          fileSizeBytes: size,
+        );
+      }
+
+      final riff = String.fromCharCodes(header.sublist(0, 4));
+      final wave = String.fromCharCodes(header.sublist(8, 12));
+      if (riff != 'RIFF' || wave != 'WAVE') {
+        return WavAudioMetadata(
+          isValid: false,
+          error:
+              'Invalid WAV container: RIFF signature "$riff", WAVE signature "$wave".',
+          fileSizeBytes: size,
+        );
+      }
+
+      final formatCode = header[20] | (header[21] << 8);
+      if (formatCode != 1) {
+        return WavAudioMetadata(
+          isValid: false,
+          error:
+              'Audio format is not PCM ($formatCode). Whisper requires 16-bit PCM WAV.',
+          fileSizeBytes: size,
+        );
+      }
+      final channels = header[22] | (header[23] << 8);
+      final sampleRate = header[24] |
+          (header[25] << 8) |
+          (header[26] << 16) |
+          (header[27] << 24);
+      final bitsPerSample = header[34] | (header[35] << 8);
+
+      final byteRate = sampleRate * channels * (bitsPerSample ~/ 8);
+      final double duration = byteRate > 0 ? (size - 44) / byteRate : 0.0;
+
+      return WavAudioMetadata(
+        isValid: true,
+        sampleRate: sampleRate,
+        numChannels: channels,
+        bitsPerSample: bitsPerSample,
+        fileSizeBytes: size,
+        durationSeconds: duration,
+      );
+    } catch (e) {
+      return WavAudioMetadata(
+        isValid: false,
+        error: 'Failed to inspect WAV header: $e',
+        fileSizeBytes: size,
+      );
+    } finally {
+      await raf?.close();
+    }
+  }
+
+  /// Start recording to specified custom path or default temporary file
+  Future<void> startRecording({String? customFilePath}) async {
     if (_isRecording) return;
 
     final hasPerm = await _recorder.hasPermission();
@@ -115,9 +216,18 @@ class SttService extends ChangeNotifier {
       throw Exception('Microphone permission not granted.');
     }
 
-    final tempDir = await getTemporaryDirectory();
-    final filePath =
-        '${tempDir.path}/lecture_${DateTime.now().millisecondsSinceEpoch}.wav';
+    String filePath;
+    if (customFilePath != null && customFilePath.isNotEmpty) {
+      filePath = customFilePath;
+      final parentDir = File(filePath).parent;
+      if (!await parentDir.exists()) {
+        await parentDir.create(recursive: true);
+      }
+    } else {
+      final tempDir = await getTemporaryDirectory();
+      filePath =
+          '${tempDir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
+    }
 
     // Must record in 16kHz mono WAV as required by Whisper ONNX
     const config = RecordConfig(
@@ -126,6 +236,7 @@ class SttService extends ChangeNotifier {
       numChannels: 1,
     );
 
+    debugPrint('[RECORD] Starting audio recording -> $filePath');
     await _recorder.start(config, path: filePath);
     _recordingPath = filePath;
     _isRecording = true;
@@ -133,35 +244,64 @@ class SttService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String> stopRecording({String? defaultFallback}) async {
-    if (!_isRecording) return _transcription;
+  /// Stops recording and returns ONLY the actual saved audio file path (does NOT transcribe)
+  Future<String?> stopRecordingOnly() async {
+    if (!_isRecording) return _recordingPath;
 
     final path = await _recorder.stop();
     _isRecording = false;
-    _recordingPath = path;
+    _recordingPath = path ?? _recordingPath;
     notifyListeners();
 
+    if (_recordingPath != null) {
+      final file = File(_recordingPath!);
+      final size = file.existsSync() ? file.lengthSync() : 0;
+      debugPrint('[RECORD] Stopped recording.');
+      debugPrint('[RECORD] Output path: $_recordingPath');
+      debugPrint('[RECORD] File size: $size bytes');
+    }
+    return _recordingPath;
+  }
+
+  /// Stops recording and then runs transcription on the resulting audio file
+  Future<String> stopRecording() async {
+    final path = await stopRecordingOnly();
     if (path != null && File(path).existsSync()) {
-      return await transcribeAudioFile(path, defaultFallback: defaultFallback);
+      return await transcribeAudioFile(path);
     }
     return '';
   }
 
-  Future<String> transcribeAudioFile(String wavFilePath,
-      {String? defaultFallback}) async {
+  /// Transcribe audio file with Whisper ONNX - NO DUMMY FALLBACKS
+  Future<String> transcribeAudioFile(String wavFilePath) async {
     _isTranscribing = true;
     notifyListeners();
 
     try {
       if (_recognizer == null) {
-        // Mock / fallback transcription for demonstration if models are still extracting
-        await Future.delayed(const Duration(milliseconds: 600));
-        _transcription = defaultFallback ??
-            'Create a deadline this Friday by 5pm for Operating Systems Lab Assignment 2 on process synchronization.';
+        debugPrint(
+            '[TRANSCRIBE] ERROR: Whisper ONNX recognizer is not initialized.');
+        _transcription =
+            "Couldn't transcribe this recording (Whisper ONNX not ready).";
         return _transcription;
       }
 
-      // 1. Read wave file into Float32 waveform
+      final metadata = await validateWavFile(wavFilePath);
+      if (!metadata.isValid) {
+        debugPrint('[TRANSCRIBE] Audio validation failed: ${metadata.error}');
+        _transcription =
+            "Couldn't transcribe this recording: ${metadata.error ?? 'Invalid audio'}";
+        return _transcription;
+      }
+
+      debugPrint('[TRANSCRIBE] START');
+      debugPrint('[TRANSCRIBE] Input audio: $wavFilePath');
+      debugPrint('[TRANSCRIBE] File size: ${metadata.fileSizeBytes} bytes');
+      debugPrint('[TRANSCRIBE] Sample rate: ${metadata.sampleRate} Hz');
+      debugPrint('[TRANSCRIBE] Channels: ${metadata.numChannels}');
+      debugPrint(
+          '[TRANSCRIBE] Duration: ${metadata.durationSeconds.toStringAsFixed(1)}s');
+
       final wave = sherpa.readWave(wavFilePath);
       if (wave.samples.isEmpty || wave.sampleRate == 0) {
         throw Exception('Invalid audio file or no samples found in WAV.');
@@ -170,12 +310,92 @@ class SttService extends ChangeNotifier {
       final int sampleRate = wave.sampleRate;
       final Float32List allSamples = wave.samples;
 
-      // 2. Safe 25-second chunking to eliminate sample-rate mismatches & audio buzzing
-      final int maxChunkSamples = sampleRate * 25; // 25 seconds per chunk
+      // 25-second chunking
+      final int maxChunkSamples = sampleRate * 25;
       final int totalSamples = allSamples.length;
       final StringBuffer resultBuffer = StringBuffer();
 
       int offset = 0;
+      int chunkIdx = 0;
+      while (offset < totalSamples) {
+        final int end = (offset + maxChunkSamples < totalSamples)
+            ? offset + maxChunkSamples
+            : totalSamples;
+
+        final Float32List chunk = allSamples.sublist(offset, end);
+        final stream = _recognizer!.createStream();
+        stream.acceptWaveform(samples: chunk, sampleRate: sampleRate);
+        _recognizer!.decode(stream);
+        final String chunkText = _recognizer!.getResult(stream).text.trim();
+        stream.free();
+
+        debugPrint('[WHISPER] Chunk $chunkIdx: "$chunkText"');
+        if (chunkText.isNotEmpty) {
+          if (resultBuffer.isNotEmpty) resultBuffer.write(' ');
+          resultBuffer.write(chunkText);
+        }
+
+        chunkIdx++;
+        offset = end;
+      }
+
+      _transcription = resultBuffer.toString().trim();
+      if (_transcription.isEmpty) {
+        _transcription = 'No speech detected in recording.';
+      }
+      return _transcription;
+    } catch (e) {
+      debugPrint('[TRANSCRIBE] Transcription error: $e');
+      _transcription = "Couldn't transcribe this recording.";
+      return _transcription;
+    } finally {
+      _isTranscribing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Transcribes the given audio file with 25s chunk timestamps - NO DUMMY FALLBACKS
+  Future<({String text, List<LectureTranscriptChunk> chunks})>
+      transcribeAudioFileWithTimestamps(String wavFilePath) async {
+    _isTranscribing = true;
+    notifyListeners();
+
+    try {
+      if (_recognizer == null) {
+        debugPrint('[TRANSCRIBE] Whisper ONNX recognizer is not initialized.');
+        throw Exception('Transcription engine (Whisper ONNX) not ready.');
+      }
+
+      final metadata = await validateWavFile(wavFilePath);
+      if (!metadata.isValid) {
+        debugPrint('[TRANSCRIBE] Audio validation failed: ${metadata.error}');
+        throw Exception(metadata.error ?? 'Invalid audio file.');
+      }
+
+      debugPrint('[TRANSCRIBE] START');
+      debugPrint('[TRANSCRIBE] Input audio: $wavFilePath');
+      debugPrint('[TRANSCRIBE] File size: ${metadata.fileSizeBytes} bytes');
+      debugPrint('[TRANSCRIBE] Sample rate: ${metadata.sampleRate} Hz');
+      debugPrint('[TRANSCRIBE] Channels: ${metadata.numChannels}');
+      debugPrint(
+          '[TRANSCRIBE] Duration: ${metadata.durationSeconds.toStringAsFixed(1)}s');
+
+      final wave = sherpa.readWave(wavFilePath);
+      if (wave.samples.isEmpty || wave.sampleRate == 0) {
+        throw Exception('Invalid audio file or no samples found in WAV.');
+      }
+
+      final int sampleRate = wave.sampleRate;
+      final Float32List allSamples = wave.samples;
+
+      // 25-second chunking
+      final int maxChunkSamples = sampleRate * 25;
+      final int totalSamples = allSamples.length;
+      final StringBuffer resultBuffer = StringBuffer();
+      final List<LectureTranscriptChunk> chunks = [];
+
+      int offset = 0;
+      int chunkIdx = 0;
       while (offset < totalSamples) {
         final int end = (offset + maxChunkSamples < totalSamples)
             ? offset + maxChunkSamples
@@ -189,28 +409,47 @@ class SttService extends ChangeNotifier {
         final String chunkText = _recognizer!.getResult(stream).text.trim();
         stream.free();
 
+        final int startSec = (offset / sampleRate).floor();
+        final int endSec = (end / sampleRate).floor();
+        final startTs = _formatTimestamp(startSec);
+        final endTs = _formatTimestamp(endSec);
+
+        debugPrint(
+            '[WHISPER] Chunk $chunkIdx ($startTs - $endTs) text: "$chunkText"');
+
         if (chunkText.isNotEmpty) {
           if (resultBuffer.isNotEmpty) resultBuffer.write(' ');
           resultBuffer.write(chunkText);
+
+          chunks.add(LectureTranscriptChunk(
+            chunkIndex: chunkIdx,
+            startTimestamp: startTs,
+            endTimestamp: endTs,
+            text: chunkText,
+          ));
         }
 
+        chunkIdx++;
         offset = end;
       }
 
-      _transcription = resultBuffer.toString();
-      if (_transcription.isEmpty) {
-        _transcription = 'No speech detected in recording.';
-      }
-      return _transcription;
-    } catch (e) {
-      debugPrint('Transcription error: $e');
+      final fullText = resultBuffer.toString().trim();
       _transcription =
-          'Create a deadline this Friday by 5pm for Operating Systems Lab Assignment 2.';
-      return _transcription;
+          fullText.isNotEmpty ? fullText : 'No speech detected in recording.';
+      return (text: _transcription, chunks: chunks);
+    } catch (e) {
+      debugPrint('[TRANSCRIBE] Timestamped transcription error: $e');
+      rethrow;
     } finally {
       _isTranscribing = false;
       notifyListeners();
     }
+  }
+
+  static String _formatTimestamp(int totalSeconds) {
+    final m = totalSeconds ~/ 60;
+    final s = totalSeconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   void clearTranscription() {
