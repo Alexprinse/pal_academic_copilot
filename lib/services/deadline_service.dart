@@ -1,6 +1,30 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/deadline.dart';
+import 'deadline_detector.dart';
+import 'pal_notification_service.dart';
+
+class TaskDashboardStats {
+  final int total;
+  final int pending;
+  final int dueToday;
+  final int overdue;
+  final int completed;
+
+  const TaskDashboardStats({
+    required this.total,
+    required this.pending,
+    required this.dueToday,
+    required this.overdue,
+    required this.completed,
+  });
+
+  @override
+  String toString() =>
+      'TaskDashboardStats(total: $total, pending: $pending, dueToday: $dueToday, overdue: $overdue, completed: $completed)';
+}
 
 class DeadlineService extends ChangeNotifier {
   static final DeadlineService instance = DeadlineService._();
@@ -13,12 +37,110 @@ class DeadlineService extends ChangeNotifier {
   int get completedCount => _deadlines.where((d) => d.isCompleted).length;
   int get totalCount => _deadlines.length;
 
-  Future<void> init() async {
-    if (_deadlines.isNotEmpty) return;
-    _populateSeedDeadlines();
+  /// Computes authoritative dashboard task statistics from the current task snapshot
+  /// using local calendar day boundaries.
+  TaskDashboardStats getDashboardStats([DateTime? referenceNow]) {
+    final now = referenceNow ?? DateTime.now();
+    final startOfToday = DateTime(now.year, now.month, now.day);
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+
+    final int total = _deadlines.length;
+    int completed = 0;
+    int pending = 0;
+    int dueToday = 0;
+    int overdue = 0;
+
+    for (final d in _deadlines) {
+      if (d.isCompleted) {
+        completed++;
+        continue;
+      }
+      pending++;
+
+      if (d.dueDate.isBefore(startOfToday)) {
+        overdue++;
+      } else if (!d.dueDate.isAfter(endOfToday)) {
+        dueToday++;
+      }
+    }
+
+    return TaskDashboardStats(
+      total: total,
+      pending: pending,
+      dueToday: dueToday,
+      overdue: overdue,
+      completed: completed,
+    );
   }
 
-  void _populateSeedDeadlines() {
+  bool _initialized = false;
+
+  Future<File> _getStorageFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/pal_deadlines.json');
+  }
+
+  Future<void> _saveToDisk() async {
+    try {
+      final file = await _getStorageFile();
+      final data = _deadlines.map((d) => d.toMap()).toList();
+      await file.writeAsString(jsonEncode(data));
+    } catch (e) {
+      debugPrint(
+          '[DEADLINE-STORAGE] Notice: unable to write pal_deadlines.json: $e');
+    }
+  }
+
+  /// Initialize DeadlineService from persistent local storage.
+  /// Does NOT load seed mock data in production.
+  Future<void> init({bool loadSeedData = false}) async {
+    if (_initialized) return;
+    try {
+      final file = await _getStorageFile();
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        if (content.trim().isNotEmpty) {
+          final List<dynamic> decoded = jsonDecode(content);
+          _deadlines.clear();
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) {
+              final dl = Deadline.fromMap(item);
+              // Safe migration: purge known seed demo IDs and corrupted mock titles
+              if (_isMockOrSeed(dl)) continue;
+              _deadlines.add(dl);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          '[DEADLINE-STORAGE] Notice: unable to load pal_deadlines.json: $e');
+    }
+
+    if (loadSeedData && _deadlines.isEmpty) {
+      populateSeedDeadlinesForTesting();
+    }
+
+    _initialized = true;
+    notifyListeners();
+  }
+
+  static bool _isMockOrSeed(Deadline dl) {
+    if (dl.id == 'dl-1' ||
+        dl.id == 'dl-2' ||
+        dl.id == 'dl-3' ||
+        dl.id == 'dl-4') {
+      return true;
+    }
+    final titleLower = dl.title.toLowerCase().trim();
+    if (titleLower == 'live video' || titleLower == 'general deadline') {
+      return true;
+    }
+    return false;
+  }
+
+  @visibleForTesting
+  void populateSeedDeadlinesForTesting() {
     final now = DateTime.now();
     _deadlines.addAll([
       Deadline(
@@ -63,25 +185,52 @@ class DeadlineService extends ChangeNotifier {
   }
 
   void addDeadline(Deadline deadline) {
+    _deadlines.removeWhere((d) =>
+        d.id == deadline.id ||
+        (deadline.lectureId != null &&
+            d.lectureId == deadline.lectureId &&
+            d.title.trim().toLowerCase() ==
+                deadline.title.trim().toLowerCase()));
     _deadlines.insert(0, deadline);
+    _saveToDisk();
     notifyListeners();
+    PalNotificationService.instance.scheduleDeadlineReminders(deadline);
+    debugPrint('[PAL-DEADLINE] Task created: "${deadline.title}"');
+    debugPrint('[PAL-DEADLINE] Task ID: ${deadline.id}');
   }
 
   void toggleComplete(String id) {
     final idx = _deadlines.indexWhere((d) => d.id == id);
     if (idx != -1) {
       _deadlines[idx].isCompleted = !_deadlines[idx].isCompleted;
+      _saveToDisk();
       notifyListeners();
+      if (_deadlines[idx].isCompleted) {
+        PalNotificationService.instance.cancelEntityNotifications(id);
+      } else {
+        PalNotificationService.instance
+            .scheduleDeadlineReminders(_deadlines[idx]);
+      }
     }
   }
 
   void deleteDeadline(String id) {
     _deadlines.removeWhere((d) => d.id == id);
+    _saveToDisk();
     notifyListeners();
+    PalNotificationService.instance.cancelEntityNotifications(id);
   }
 
-  /// Dual-path Natural Language Deadline Extraction
-  Deadline parseNaturalLanguage(String input) {
+  /// Natural Language Deadline Extraction utilizing DeadlineDetector
+  Deadline parseNaturalLanguage(
+    String input, {
+    DateTime? referenceDate,
+    String? subject,
+    String? lectureId,
+    String? recordingId,
+    String? audioTimestamp,
+    int? audioTimestampSeconds,
+  }) {
     // Path 1: Attempt JSON block extraction
     final jsonMatch =
         RegExp(r'```(?:event|json)?\s*(\{[\s\S]*?\})\s*```').firstMatch(input);
@@ -89,134 +238,83 @@ class DeadlineService extends ChangeNotifier {
       try {
         final jsonStr = jsonMatch.group(1)!;
         final map = json.decode(jsonStr) as Map<String, dynamic>;
-        return Deadline(
+        final dl = Deadline(
           id: 'dl_${DateTime.now().millisecondsSinceEpoch}',
-          title: map['title'] as String? ?? 'Academic Deadline',
-          course: map['course'] as String? ?? 'General',
+          title: map['title'] as String? ?? 'Course Assignment',
+          course: map['course'] as String? ?? subject ?? 'General',
           dueDate: DateTime.tryParse(map['dueDate'] as String? ?? '') ??
-              DateTime.now().add(const Duration(days: 2)),
+              (referenceDate ?? DateTime.now()).add(const Duration(days: 2)),
           priority: TaskPriority.values.firstWhere(
             (p) => p.name == (map['priority'] as String? ?? 'medium'),
             orElse: () => TaskPriority.medium,
           ),
+          description: map['description'] as String?,
+          lectureId: lectureId,
+          recordingId: recordingId,
+          audioTimestamp: audioTimestamp,
+          sourceTimestampSeconds: audioTimestampSeconds,
+          isSpokenDetected: true,
         );
+        debugPrint('[PAL-DEADLINE] Task created: "${dl.title}"');
+        debugPrint('[PAL-DEADLINE] Task ID: ${dl.id}');
+        return dl;
       } catch (e) {
         debugPrint('JSON parsing failed, moving to deterministic fallback: $e');
       }
     }
 
-    // Path 2: Deterministic Regex & Temporal Fallback
-    final lower = input.toLowerCase();
-    final now = DateTime.now();
-
-    // 1. Detect Course
-    String course = 'General';
-    if (lower.contains('english')) {
-      course = 'English';
-    } else if (lower.contains('os') || lower.contains('operating systems')) {
-      course = 'Operating Systems';
-    } else if (lower.contains('physics')) {
-      course = 'Engineering Physics';
-    } else if (lower.contains('math')) {
-      course = 'Discrete Mathematics';
-    } else if (lower.contains('chemistry')) {
-      course = 'Chemistry';
-    } else if (lower.contains('dsa') || lower.contains('data structures')) {
-      course = 'Data Structures';
-    }
-
-    // 2. Detect Priority
-    TaskPriority priority = TaskPriority.medium;
-    if (lower.contains('urgent') ||
-        lower.contains('asap') ||
-        lower.contains('important') ||
-        lower.contains('exam')) {
-      priority = TaskPriority.high;
-    } else if (lower.contains('reading') || lower.contains('optional')) {
-      priority = TaskPriority.low;
-    }
-
-    // 3. Detect Day
-    DateTime targetDate = now;
-    final weekdayMap = {
-      'monday': DateTime.monday,
-      'tuesday': DateTime.tuesday,
-      'wednesday': DateTime.wednesday,
-      'thursday': DateTime.thursday,
-      'friday': DateTime.friday,
-      'saturday': DateTime.saturday,
-      'sunday': DateTime.sunday,
-    };
-
-    bool dayFound = false;
-    if (lower.contains('tomorrow')) {
-      targetDate = now.add(const Duration(days: 1));
-      dayFound = true;
-    } else if (lower.contains('today')) {
-      targetDate = now;
-      dayFound = true;
-    } else {
-      for (final entry in weekdayMap.entries) {
-        if (lower.contains(entry.key)) {
-          int daysToAdd = entry.value - now.weekday;
-          if (daysToAdd <= 0) daysToAdd += 7; // Next occurrence
-          targetDate = now.add(Duration(days: daysToAdd));
-          dayFound = true;
-          break;
-        }
-      }
-    }
-
-    if (!dayFound) {
-      targetDate = now.add(const Duration(days: 2));
-    }
-
-    // 4. Detect Time (e.g., 5pm, 11:59pm, 17:00, 9 am)
-    int hour = 17; // Default 5:00 PM
-    int minute = 0;
-    final timeMatch =
-        RegExp(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', caseSensitive: false)
-            .firstMatch(input);
-    if (timeMatch != null) {
-      int parsedHour = int.tryParse(timeMatch.group(1) ?? '17') ?? 17;
-      final parsedMin = int.tryParse(timeMatch.group(2) ?? '0') ?? 0;
-      final amPm = timeMatch.group(3)?.toLowerCase();
-
-      if (amPm == 'pm' && parsedHour < 12) parsedHour += 12;
-      if (amPm == 'am' && parsedHour == 12) parsedHour = 0;
-
-      hour = parsedHour;
-      minute = parsedMin;
-    }
-
-    final finalDueDate = DateTime(
-      targetDate.year,
-      targetDate.month,
-      targetDate.day,
-      hour,
-      minute,
+    // Path 2: Advanced DeadlineDetector
+    final candidates = DeadlineDetector.detectCandidates(
+      input,
+      referenceDate: referenceDate,
+      subject: subject,
+      lectureId: lectureId,
+      recordingId: recordingId,
+      currentElapsedSeconds: audioTimestampSeconds,
     );
 
-    // 5. Detect Title
-    String title = 'Course Assignment';
-    final forMatch = RegExp(
-            r'for\s+([a-zA-Z0-9\s]+?)(?:\s+by|\s+this|\s+on|\s+at|$)',
-            caseSensitive: false)
-        .firstMatch(input);
-    if (forMatch != null && forMatch.group(1)!.trim().isNotEmpty) {
-      title = forMatch.group(1)!.trim();
-      // Capitalize first letter
-      title = title[0].toUpperCase() + title.substring(1);
-    } else {
-      title = '$course Deadline';
+    if (candidates.isNotEmpty) {
+      final best = candidates.firstWhere(
+        (c) => c.isValid,
+        orElse: () => candidates.first,
+      );
+      final dl = best.toDeadline();
+      debugPrint('[PAL-DEADLINE] Task created: "${dl.title}"');
+      debugPrint('[PAL-DEADLINE] Task ID: ${dl.id}');
+      return dl;
     }
 
-    return Deadline(
+    // Fallback if completely unparseable
+    final cleanSubject =
+        (subject != null && subject != 'General') ? subject : 'General';
+    final dl = Deadline(
       id: 'dl_${DateTime.now().millisecondsSinceEpoch}',
-      title: title,
-      course: course,
-      dueDate: finalDueDate,
-      priority: priority,
+      title: cleanSubject != 'General'
+          ? '$cleanSubject Assignment'
+          : 'Course Assignment',
+      course: cleanSubject,
+      dueDate: (referenceDate ?? DateTime.now()).add(const Duration(days: 2)),
+      priority: TaskPriority.medium,
+      isSpokenDetected: true,
+      audioTimestamp: audioTimestamp ?? '01:15',
+      sourceLocation:
+          cleanSubject != 'General' ? cleanSubject : 'Lecture Audio',
+      lectureId: lectureId,
+      recordingId: recordingId,
+      sourceTimestampSeconds: audioTimestampSeconds,
+      confidence: 0.5,
+      needsReview: true,
+      hasExplicitDueDate: false,
     );
+    debugPrint('[PAL-DEADLINE] Task created: "${dl.title}"');
+    debugPrint('[PAL-DEADLINE] Task ID: ${dl.id}');
+    return dl;
+  }
+
+  @visibleForTesting
+  void setDeadlinesForTesting(List<Deadline> items) {
+    _deadlines.clear();
+    _deadlines.addAll(items);
+    notifyListeners();
   }
 }

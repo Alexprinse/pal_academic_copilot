@@ -41,6 +41,11 @@ class AppTheme {
   static const Color redAccent = overduePillText;
   static const Color textMuted = textSecondary;
 
+  static const Color semanticSuccess = trustPillText;
+  static const Color semanticError = overduePillText;
+  static const Color cardBackground = cardSurface;
+  static const Color surfaceSubtle = neutralPillFill;
+
   static ThemeData get darkTheme => lightTheme;
 
   // Soft diffused elevation card shadow

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/deadline.dart';
+import '../models/lecture_recording.dart';
 import '../services/deadline_service.dart';
+import '../services/lecture_recording_service.dart';
 import '../theme/app_theme.dart';
+import 'lecture_details_screen.dart';
 
 class TasksScreen extends StatefulWidget {
   final Function(int, {String? initialQuery})? onNavigateToTab;
@@ -671,7 +674,7 @@ class _TasksScreenState extends State<TasksScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        '🎙️ Detected at ${task.audioTimestamp ?? "18:40"} · ${task.sourceLocation ?? "Lecture 3 Audio"}',
+                        '🎙️ Detected at ${task.audioTimestamp ?? "01:15"} · ${task.sourceLocation ?? task.course}',
                         style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -680,10 +683,7 @@ class _TasksScreenState extends State<TasksScreen> {
                       ),
                     ),
                     InkWell(
-                      onTap: () {
-                        widget.onNavigateToTab
-                            ?.call(1); // Jump to Voice capture
-                      },
+                      onTap: () => _jumpToAudioTimestamp(task),
                       child: const Text(
                         'Jump to audio timestamp →',
                         style: TextStyle(
@@ -701,5 +701,38 @@ class _TasksScreenState extends State<TasksScreen> {
         ),
       ),
     );
+  }
+
+  void _jumpToAudioTimestamp(Deadline task) {
+    LectureRecording? matchingRec;
+    final recordings = LectureRecordingService.instance.recordings;
+    if (task.lectureId != null && task.lectureId!.isNotEmpty) {
+      matchingRec = recordings.cast<LectureRecording?>().firstWhere(
+            (r) => r?.id == task.lectureId,
+            orElse: () => null,
+          );
+    }
+    if (matchingRec == null && task.sourceLocation != null) {
+      matchingRec = recordings.cast<LectureRecording?>().firstWhere(
+            (r) =>
+                r?.subject == task.sourceLocation ||
+                r?.title == task.sourceLocation,
+            orElse: () => null,
+          );
+    }
+
+    if (matchingRec != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => LectureDetailsScreen(
+            recording: matchingRec!,
+            initialPositionSeconds: task.sourceTimestampSeconds,
+          ),
+        ),
+      );
+    } else {
+      widget.onNavigateToTab?.call(1);
+    }
   }
 }

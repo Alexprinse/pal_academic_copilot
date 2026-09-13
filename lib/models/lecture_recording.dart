@@ -70,6 +70,7 @@ class LectureSummary {
 class LectureRecording {
   final String id;
   final String subject;
+  final String? title;
   final String? timetableEntryId;
   final DateTime date;
   final String scheduledStart;
@@ -86,10 +87,16 @@ class LectureRecording {
   final List<LectureTranscriptChunk> chunks;
   final LectureSummary? summary;
   final List<String> extractedDeadlineIds;
+  final String sourceType; // 'scheduledLecture', 'liveCapture', 'importedAudio'
+
+  final String? subjectId;
+  final String? unitId;
+  final String? unitName;
 
   const LectureRecording({
     required this.id,
     required this.subject,
+    this.title,
     this.timetableEntryId,
     required this.date,
     required this.scheduledStart,
@@ -105,7 +112,16 @@ class LectureRecording {
     this.chunks = const [],
     this.summary,
     this.extractedDeadlineIds = const [],
+    this.sourceType = 'scheduledLecture',
+    this.subjectId,
+    this.unitId,
+    this.unitName,
   });
+
+  bool get isLiveCapture => sourceType == 'liveCapture';
+
+  String get displayTitle =>
+      (title != null && title!.trim().isNotEmpty) ? title! : subject;
 
   String get formattedFileSize {
     if (fileSizeBytes <= 0) return '0 KB';
@@ -134,6 +150,7 @@ class LectureRecording {
   LectureRecording copyWith({
     String? id,
     String? subject,
+    String? title,
     String? timetableEntryId,
     DateTime? date,
     String? scheduledStart,
@@ -149,10 +166,15 @@ class LectureRecording {
     List<LectureTranscriptChunk>? chunks,
     LectureSummary? summary,
     List<String>? extractedDeadlineIds,
+    String? sourceType,
+    String? subjectId,
+    String? unitId,
+    String? unitName,
   }) {
     return LectureRecording(
       id: id ?? this.id,
       subject: subject ?? this.subject,
+      title: title ?? this.title,
       timetableEntryId: timetableEntryId ?? this.timetableEntryId,
       date: date ?? this.date,
       scheduledStart: scheduledStart ?? this.scheduledStart,
@@ -168,12 +190,17 @@ class LectureRecording {
       chunks: chunks ?? this.chunks,
       summary: summary ?? this.summary,
       extractedDeadlineIds: extractedDeadlineIds ?? this.extractedDeadlineIds,
+      sourceType: sourceType ?? this.sourceType,
+      subjectId: subjectId ?? this.subjectId,
+      unitId: unitId ?? this.unitId,
+      unitName: unitName ?? this.unitName,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'subject': subject,
+        'title': title,
         'timetableEntryId': timetableEntryId,
         'date': date.toIso8601String(),
         'scheduledStart': scheduledStart,
@@ -189,12 +216,17 @@ class LectureRecording {
         'chunks': chunks.map((c) => c.toJson()).toList(),
         'summary': summary?.toJson(),
         'extractedDeadlineIds': extractedDeadlineIds,
+        'sourceType': sourceType,
+        if (subjectId != null) 'subjectId': subjectId,
+        if (unitId != null) 'unitId': unitId,
+        if (unitName != null) 'unitName': unitName,
       };
 
   factory LectureRecording.fromJson(Map<String, dynamic> json) =>
       LectureRecording(
         id: json['id'] as String,
         subject: json['subject'] as String,
+        title: json['title'] as String?,
         timetableEntryId: json['timetableEntryId'] as String?,
         date: DateTime.parse(json['date'] as String),
         scheduledStart: (json['scheduledStart'] as String?) ?? '09:00 AM',
@@ -222,5 +254,9 @@ class LectureRecording {
                 ?.map((e) => e.toString())
                 .toList() ??
             const [],
+        sourceType: (json['sourceType'] as String?) ?? 'scheduledLecture',
+        subjectId: json['subjectId'] as String?,
+        unitId: json['unitId'] as String?,
+        unitName: json['unitName'] as String?,
       );
 }

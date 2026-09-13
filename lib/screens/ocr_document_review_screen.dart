@@ -171,12 +171,15 @@ class _OcrDocumentReviewScreenState extends State<OcrDocumentReviewScreen> {
                 const Icon(Icons.security,
                     size: 11, color: AppTheme.trustPillText),
                 const SizedBox(width: 4),
-                const Text(
-                  '100% On-Device OCR • Knowledge Base Review',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.trustPillText,
+                const Expanded(
+                  child: Text(
+                    '100% On-Device OCR • Knowledge Base Review',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.trustPillText,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],

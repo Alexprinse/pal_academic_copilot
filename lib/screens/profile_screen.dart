@@ -6,6 +6,7 @@ import '../services/deadline_service.dart';
 import '../services/rag_service.dart';
 import '../services/llm_service.dart';
 import '../theme/app_theme.dart';
+import 'notification_test_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Function(int)? onNavigateTab;
@@ -653,21 +654,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Icon(Icons.calendar_today_outlined,
-                      size: 13, color: AppTheme.textSecondary),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${profile.semester} • ${profile.academicYear}',
-                    style: const TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.textSecondary,
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.calendar_today_outlined,
+                        size: 13, color: AppTheme.textSecondary),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        '${profile.semester} • ${profile.academicYear}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -947,24 +956,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 4,
                   children: [
-                    const Icon(Icons.schedule,
-                        size: 11, color: AppTheme.textInactive),
-                    const SizedBox(width: 4),
-                    Text(
-                      course.schedule,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppTheme.textSecondary),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.schedule,
+                            size: 11, color: AppTheme.textInactive),
+                        const SizedBox(width: 4),
+                        Text(
+                          course.schedule,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppTheme.textSecondary),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    const Icon(Icons.room_outlined,
-                        size: 11, color: AppTheme.textInactive),
-                    const SizedBox(width: 3),
-                    Text(
-                      course.room,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppTheme.textSecondary),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.room_outlined,
+                            size: 11, color: AppTheme.textInactive),
+                        const SizedBox(width: 3),
+                        Text(
+                          course.room,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppTheme.textSecondary),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1196,11 +1216,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Local Model Cache',
-                    style:
-                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  Expanded(
+                    child: Text(
+                      'Local Model Cache',
+                      style:
+                          TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                  SizedBox(width: 8),
                   Text(
                     '490 MB (Qwen 2.5 INT4)',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
@@ -1211,11 +1236,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Study Vault Vector Store',
-                    style:
-                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  Expanded(
+                    child: Text(
+                      'Study Vault Vector Store',
+                      style:
+                          TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                  SizedBox(width: 8),
                   Text(
                     '18.4 MB (Local Chunks)',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
@@ -1226,11 +1256,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Lecture Audio Sandbox',
-                    style:
-                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  Expanded(
+                    child: Text(
+                      'Lecture Audio Sandbox',
+                      style:
+                          TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                  SizedBox(width: 8),
                   Text(
                     '34.2 MB (WAV Cache)',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
@@ -1274,6 +1309,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildActionButtons() {
     return Column(
       children: [
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const NotificationTestScreen(),
+              ),
+            );
+          },
+          icon: const Icon(Icons.notifications_active_outlined,
+              size: 16, color: AppTheme.primaryAccent),
+          label: const Text(
+            'Notification Test Panel (Android 16)',
+            style: TextStyle(
+              color: AppTheme.primaryAccent,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: AppTheme.primaryAccent),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            minimumSize: const Size(double.infinity, 44),
+          ),
+        ),
+        const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed: _showExportDialog,
           icon: const Icon(Icons.file_download_outlined, size: 18),

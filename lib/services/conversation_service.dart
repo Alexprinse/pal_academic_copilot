@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/chat_message.dart';
 import '../models/conversation_session.dart';
+import '../models/rag_scope.dart';
 
 class ConversationService extends ChangeNotifier {
   static final ConversationService instance = ConversationService._internal();
@@ -78,11 +79,24 @@ class ConversationService extends ChangeNotifier {
   Future<ConversationSession> createConversation({
     String? initialTitle,
     String? initialRagScope,
+    String? lectureId,
+    String? lectureTitle,
+    String? documentId,
+    String? documentTitle,
+    String? sourceType,
+    String? backgroundContext,
+    String? subjectId,
+    String? subjectName,
+    String? unitId,
+    String? unitName,
+    String? ragScopeType,
+    RagScope? ragScope,
+    AcademicChatMessage? initialMessage,
   }) async {
     final now = DateTime.now();
     final convId = 'conv_${now.millisecondsSinceEpoch}';
 
-    final welcomeMessage = AcademicChatMessage(
+    final defaultWelcomeMessage = AcademicChatMessage(
       id: 'msg_welcome_${now.millisecondsSinceEpoch}',
       conversationId: convId,
       role: 'assistant',
@@ -96,9 +110,21 @@ class ConversationService extends ChangeNotifier {
       title: initialTitle ?? 'New Chat',
       createdAt: now,
       updatedAt: now,
-      selectedRagScope: initialRagScope ?? 'Unit 1 (OS)',
-      messages: [welcomeMessage],
+      selectedRagScope: initialRagScope ?? 'Operating Systems · Unit 1',
+      messages: [initialMessage ?? defaultWelcomeMessage],
       isPinned: false,
+      lectureId: lectureId,
+      lectureTitle: lectureTitle,
+      documentId: documentId,
+      documentTitle: documentTitle,
+      sourceType: sourceType,
+      backgroundContext: backgroundContext,
+      ragScopeType: ragScopeType ?? ragScope?.type.name,
+      subjectId: subjectId ?? ragScope?.subjectId,
+      subjectName: subjectName ?? ragScope?.subjectName,
+      unitId: unitId ?? ragScope?.unitId,
+      unitName: unitName ?? ragScope?.unitName,
+      ragScope: ragScope,
     );
 
     _conversations.insert(0, session);
@@ -108,6 +134,22 @@ class ConversationService extends ChangeNotifier {
     notifyListeners();
     _saveToDisk();
     return session;
+  }
+
+  ConversationSession? findConversationByLectureId(String lectureId) {
+    try {
+      return _conversations.firstWhere((c) => c.lectureId == lectureId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ConversationSession? findConversationByDocumentId(String documentId) {
+    try {
+      return _conversations.firstWhere((c) => c.documentId == documentId);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> setActiveConversation(String conversationId) async {

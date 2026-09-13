@@ -97,6 +97,12 @@ class OcrService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @visibleForTesting
+  void setLastResultForTest(OcrResult? result) {
+    _lastResult = result;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     _textRecognizer?.close();

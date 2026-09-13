@@ -2,7 +2,8 @@ enum ExtractionType {
   nativePdf,
   printedOcr,
   handwrittenOcr,
-  userCorrected;
+  userCorrected,
+  audioTranscript;
 
   String get label {
     switch (this) {
@@ -14,6 +15,8 @@ enum ExtractionType {
         return 'Handwritten OCR';
       case ExtractionType.userCorrected:
         return 'User Corrected';
+      case ExtractionType.audioTranscript:
+        return 'Audio Transcript';
     }
   }
 
@@ -21,6 +24,8 @@ enum ExtractionType {
       this == ExtractionType.printedOcr ||
       this == ExtractionType.handwrittenOcr ||
       this == ExtractionType.userCorrected;
+
+  bool get isAudio => this == ExtractionType.audioTranscript;
 }
 
 class ExtractedPageContent {

@@ -1,11 +1,17 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/deadline.dart';
+import '../models/lecture_recording.dart';
+import '../services/deadline_detector.dart';
+import '../services/lecture_intelligence_service.dart';
 import '../services/lecture_recording_service.dart';
 import '../services/stt_service.dart';
 import '../services/deadline_service.dart';
 import '../theme/app_theme.dart';
+import 'lecture_details_screen.dart';
 import 'lectures_history_screen.dart';
 
 class VoiceNotesScreen extends StatefulWidget {
@@ -24,6 +30,7 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
 
   Timer? _recordTimer;
   int _elapsedSeconds = 0;
+  DeadlineCandidate? _detectedCandidate;
   Deadline? _detectedDeadline;
   String? _detectedPhrase;
   bool _taskSaved = false;
@@ -35,6 +42,7 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
   void initState() {
     super.initState();
     _sttService.addListener(_onServiceUpdate);
+    LectureRecordingService.instance.addListener(_onServiceUpdate);
 
     _pulseController = AnimationController(
       vsync: this,
@@ -52,6 +60,7 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
   void dispose() {
     _recordTimer?.cancel();
     _pulseController.dispose();
+    LectureRecordingService.instance.removeListener(_onServiceUpdate);
     _sttService.removeListener(_onServiceUpdate);
     super.dispose();
   }
@@ -59,9 +68,12 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
   void _onServiceUpdate() {
     if (!mounted) return;
 
-    if (_sttService.isRecording && _recordTimer == null) {
+    final isRec = _sttService.isRecording ||
+        LectureRecordingService.instance.isRecordingNow;
+
+    if (isRec && _recordTimer == null) {
       _startTimer();
-    } else if (!_sttService.isRecording && _recordTimer != null) {
+    } else if (!isRec && _recordTimer != null) {
       _stopTimer();
     }
 
@@ -90,20 +102,22 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
     if (text.trim().isEmpty) {
       _detectedPhrase = null;
       _detectedDeadline = null;
+      _detectedCandidate = null;
       return;
     }
 
-    final triggerPattern = RegExp(
-      r'([^.\n]*?(?:submit|due|deadline|homework|lab|assignment|by\s+[A-Za-z]+|at\s+\d+)[^.\n]*?\.)',
-      caseSensitive: false,
+    final candidates = DeadlineDetector.detectCandidates(
+      text,
+      referenceDate: DateTime.now(),
+      currentElapsedSeconds: _elapsedSeconds,
     );
 
-    final match = triggerPattern.firstMatch(text);
-    if (match != null) {
-      final phrase = match.group(0)?.trim();
-      if (phrase != null && phrase != _detectedPhrase) {
-        _detectedPhrase = phrase;
-        _detectedDeadline = _deadlineService.parseNaturalLanguage(phrase);
+    if (candidates.isNotEmpty) {
+      final best = candidates.first;
+      if (best.evidenceText != _detectedPhrase || _detectedDeadline == null) {
+        _detectedCandidate = best;
+        _detectedPhrase = best.evidenceText;
+        _detectedDeadline = best.toDeadline();
       }
     }
   }
@@ -114,13 +128,43 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
     return '$mins:$secs';
   }
 
+  String _formatDateMonthDay(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
   Future<void> _toggleRecord() async {
     try {
-      if (_sttService.isRecording) {
-        await _sttService.stopRecording();
+      final isRec = _sttService.isRecording ||
+          LectureRecordingService.instance.isRecordingNow;
+
+      if (isRec) {
         _stopTimer();
+        final finalized =
+            await LectureRecordingService.instance.stopLiveCapture();
+        if (finalized != null && mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => LectureDetailsScreen(recording: finalized),
+            ),
+          );
+        }
       } else {
-        await _sttService.startRecording();
+        await LectureRecordingService.instance.startLiveCapture();
         _startTimer();
       }
     } catch (e) {
@@ -141,23 +185,84 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
       allowedExtensions: ['wav'],
     );
     if (result != null && result.files.single.path != null) {
-      await _sttService.transcribeAudioFile(result.files.single.path!);
+      final sourcePath = result.files.single.path!;
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) return;
+
+      final now = DateTime.now();
+      final dateSlug =
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+      final newId = 'imported_$dateSlug';
+
+      String destPath = '';
+      int fileSize = 0;
+      try {
+        final docsDir = await getApplicationDocumentsDirectory();
+        final lecturesDir = Directory('${docsDir.path}/lectures');
+        if (!await lecturesDir.exists()) {
+          await lecturesDir.create(recursive: true);
+        }
+        destPath = '${lecturesDir.path}/$newId.wav';
+        await sourceFile.copy(destPath);
+        fileSize = await File(destPath).length();
+      } catch (e) {
+        debugPrint('Error importing WAV file: $e');
+        destPath = sourcePath;
+      }
+
+      final fileName = result.files.single.name;
+      final cleanName = fileName.replaceAll('.wav', '').replaceAll('_', ' ');
+      final title = 'Imported · $cleanName';
+
+      final rec = LectureRecording(
+        id: newId,
+        subject: title,
+        title: title,
+        date: now,
+        scheduledStart: '00:00',
+        scheduledEnd: '00:00',
+        actualStart: now,
+        actualEnd: now,
+        audioPath: destPath,
+        durationSeconds: 0,
+        fileSizeBytes: fileSize,
+        transcriptionStatus: 'transcribing',
+        summaryStatus: 'generating',
+        sourceType: 'importedAudio',
+      );
+
+      await LectureRecordingService.instance.updateRecordingInStore(rec);
+      LectureIntelligenceService.instance.processLecture(rec);
+
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => LectureDetailsScreen(recording: rec),
+          ),
+        );
+      }
     }
   }
 
   void _saveDetectedDeadline() {
-    if (_detectedDeadline == null) return;
+    if (_detectedDeadline == null && _detectedCandidate == null) return;
 
-    final newDl = Deadline(
+    final candidate = _detectedCandidate;
+    final baseDeadline =
+        candidate != null ? candidate.toDeadline() : _detectedDeadline!;
+    final timestamp = _formatDuration(_elapsedSeconds > 0
+        ? _elapsedSeconds
+        : (baseDeadline.sourceTimestampSeconds ?? 75));
+
+    final newDl = baseDeadline.copyWith(
       id: 'dl_${DateTime.now().millisecondsSinceEpoch}',
-      title: _detectedDeadline!.title,
-      course: _detectedDeadline!.course,
-      dueDate: _detectedDeadline!.dueDate,
-      priority: _detectedDeadline!.priority,
+      audioTimestamp: timestamp,
+      sourceTimestampSeconds: _elapsedSeconds > 0
+          ? _elapsedSeconds
+          : baseDeadline.sourceTimestampSeconds,
+      sourceLocation: baseDeadline.course,
       isSpokenDetected: true,
-      audioTimestamp:
-          _formatDuration(_elapsedSeconds > 0 ? _elapsedSeconds : 148),
-      sourceLocation: 'Lecture 3 Audio',
     );
 
     _deadlineService.addDeadline(newDl);
@@ -597,9 +702,11 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Task detected just now',
-                              style: TextStyle(
+                            Text(
+                              (_detectedCandidate?.needsReview ?? false)
+                                  ? 'Review detected task'
+                                  : 'Task detected just now',
+                              style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: AppTheme.detectedPillText,
@@ -619,12 +726,26 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Due: ${_detectedDeadline!.countdownString} · ${_detectedDeadline!.course}',
+                              'Due · ${_formatDateMonthDay(_detectedDeadline!.dueDate)}${_detectedDeadline!.hasExplicitDueTime && _detectedCandidate?.dueTimeFormatted != null ? " · " + _detectedCandidate!.dueTimeFormatted! : ""} · ${_detectedDeadline!.course}',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppTheme.detectedPillText,
                               ),
                             ),
+                            if (_detectedPhrase != null &&
+                                _detectedPhrase!.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                '🎙 Detected at ${_detectedDeadline!.audioTimestamp ?? "01:15"}\n"${_detectedPhrase!}"',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontStyle: FontStyle.italic,
+                                  color: AppTheme.textSecondary,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -683,31 +804,31 @@ class _VoiceNotesScreenState extends State<VoiceNotesScreen>
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _sttService.isRecording
-                            ? Icons.stop_circle_outlined
-                            : Icons.mic,
-                        size: 20,
-                        color: _sttService.isRecording
-                            ? AppTheme.overduePillText
-                            : AppTheme.primaryAccent,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _sttService.isRecording
-                            ? 'Stop capture'
-                            : 'Start live capture',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.canvasBg,
+                  child: Builder(builder: (context) {
+                    final isRec = _sttService.isRecording ||
+                        LectureRecordingService.instance.isRecordingNow;
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          isRec ? Icons.stop_circle_outlined : Icons.mic,
+                          size: 20,
+                          color: isRec
+                              ? AppTheme.overduePillText
+                              : AppTheme.primaryAccent,
                         ),
-                      ),
-                    ],
-                  ),
+                        const SizedBox(width: 8),
+                        Text(
+                          isRec ? 'Stop capture' : 'Start live capture',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.canvasBg,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
                 ),
               ),
               const SizedBox(height: 14),

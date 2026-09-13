@@ -21,8 +21,15 @@ class QuizQuestion {
 
 class QuizScreen extends StatefulWidget {
   final VoidCallback? onOpenVaultCitations;
+  final List<QuizQuestion>? customQuestions;
+  final String? title;
 
-  const QuizScreen({super.key, this.onOpenVaultCitations});
+  const QuizScreen({
+    super.key,
+    this.onOpenVaultCitations,
+    this.customQuestions,
+    this.title,
+  });
 
   @override
   State<QuizScreen> createState() => _QuizScreenState();
@@ -34,7 +41,19 @@ class _QuizScreenState extends State<QuizScreen> {
   bool _hasSubmitted = false;
   int _correctCount = 0;
 
-  final List<QuizQuestion> _questions = const [
+  late final List<QuizQuestion> _questions;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.customQuestions != null && widget.customQuestions!.isNotEmpty) {
+      _questions = widget.customQuestions!;
+    } else {
+      _questions = _defaultQuestions;
+    }
+  }
+
+  static const List<QuizQuestion> _defaultQuestions = [
     QuizQuestion(
       question:
           'Which normal form eliminates transitive functional dependencies on the primary key?',
@@ -59,7 +78,8 @@ class _QuizScreenState extends State<QuizScreen> {
         'Preemptive Priority Inversion',
       ],
       correctIndex: 3,
-      citation: 'Answer is Preemptive Priority Inversion — sourced from Silberschatz OS §6.3, p. 142',
+      citation:
+          'Answer is Preemptive Priority Inversion — sourced from Silberschatz OS §6.3, p. 142',
       topic: 'Peterson\'s Algorithm & Semaphores',
       difficulty: 'Hard',
     ),
@@ -73,7 +93,8 @@ class _QuizScreenState extends State<QuizScreen> {
         'Δx = 2n · π',
       ],
       correctIndex: 1,
-      citation: 'Answer is Δx = n · λ — sourced from Wave Optics Handbook, p. 48',
+      citation:
+          'Answer is Δx = n · λ — sourced from Wave Optics Handbook, p. 48',
       topic: 'Wave Optics Interference',
       difficulty: 'Easy',
     ),
@@ -127,13 +148,14 @@ class _QuizScreenState extends State<QuizScreen> {
           icon: const Icon(Icons.arrow_back, color: AppTheme.textPrimary),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: const Text(
-          'Practice Quiz',
-          style: TextStyle(
+        title: Text(
+          widget.title ?? 'Practice Quiz',
+          style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
             color: AppTheme.textPrimary,
           ),
+          overflow: TextOverflow.ellipsis,
         ),
       ),
       body: SafeArea(
@@ -270,8 +292,8 @@ class _QuizScreenState extends State<QuizScreen> {
                 onTap: () => _selectOption(index),
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 14),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   decoration: BoxDecoration(
                     color: cardBg,
                     borderRadius: BorderRadius.circular(14),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../main.dart';
 import 'dashboard_screen.dart';
 import 'voice_notes_screen.dart';
 import 'pal_brain_screen.dart';
@@ -14,15 +15,15 @@ class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
   @override
-  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
+  State<MainNavigationScreen> createState() => MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
+class MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   final GlobalKey<PalBrainScreenState> _brainKey =
       GlobalKey<PalBrainScreenState>();
 
-  void _switchTab(int index,
+  void switchTab(int index,
       {String? initialQuery, String? filterSubject, String? filterUnit}) {
     if (index == 96) {
       _openTasksScreen();
@@ -36,6 +37,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       target = 2; // Ask AI fallback
     }
 
+    // Dismiss any pushed modal/drilldown routes (e.g. Vault screens, sheets)
+    // so the interface cleanly transitions and reveals the target tab.
+    final nav = PalApp.navigatorKey.currentState ?? Navigator.maybeOf(context);
+    if (nav != null && nav.canPop()) {
+      nav.popUntil((route) => route.isFirst);
+    }
+
     setState(() {
       _currentIndex = target;
     });
@@ -44,6 +52,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _brainKey.currentState?.setQuery(
           initialQuery,
+          subject: filterSubject,
+          unit: filterUnit,
           ragScope: filterUnit ?? filterSubject,
         );
       });
@@ -55,7 +65,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       MaterialPageRoute(
         builder: (_) => QuizScreen(
           onOpenVaultCitations: () {
-            _switchTab(2); // Ask AI
+            switchTab(2); // Ask AI
           },
         ),
       ),
@@ -65,7 +75,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _openTasksScreen() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => TasksScreen(onNavigateToTab: _switchTab),
+        builder: (_) => TasksScreen(onNavigateToTab: switchTab),
       ),
     );
   }
@@ -73,7 +83,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _openProfileModal() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ProfileScreen(onNavigateTab: _switchTab),
+        builder: (_) => ProfileScreen(onNavigateTab: switchTab),
       ),
     );
   }
@@ -93,7 +103,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         if (idx == 99) {
           _openQuizModal();
         } else if (idx == 98) {
-          _switchTab(4); // Vault tab
+          switchTab(4); // Vault tab
         } else if (idx == 97) {
           _openProfileModal();
         } else if (idx == 96) {
@@ -101,13 +111,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         } else if (idx == 95) {
           _openTimetableScreen();
         } else {
-          _switchTab(idx);
+          switchTab(idx);
         }
       }),
-      VoiceNotesScreen(onNavigateToBrain: _switchTab),
+      VoiceNotesScreen(onNavigateToBrain: switchTab),
       PalBrainScreen(key: _brainKey),
-      OcrScannerScreen(onNavigateToBrain: _switchTab),
-      StudyVaultScreen(onNavigateToBrain: _switchTab),
+      OcrScannerScreen(onNavigateToBrain: switchTab),
+      StudyVaultScreen(onNavigateToBrain: switchTab),
     ];
 
     return Scaffold(

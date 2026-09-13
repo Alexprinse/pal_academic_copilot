@@ -20,6 +20,7 @@ class LlmModelPreset {
   final String description;
   final int recommendedContext;
   final bool isCustom;
+  final int? minSizeBytes;
   ModelStatus status;
   double downloadProgress;
   double downloadSpeedMbps;
@@ -40,6 +41,7 @@ class LlmModelPreset {
     required this.description,
     this.recommendedContext = 2048,
     this.isCustom = false,
+    this.minSizeBytes,
     this.status = ModelStatus.notDownloaded,
     this.downloadProgress = 0.0,
     this.downloadSpeedMbps = 0.0,
@@ -51,7 +53,7 @@ class LlmModelPreset {
   static List<LlmModelPreset> get defaultPresets => [
         LlmModelPreset(
           id: 'smollm2-135m',
-          name: 'SmolLM2 135M',
+          name: 'SmolLM2 135M Instruct',
           parameters: '135M',
           quant: 'Q4_K_M',
           sizeMb: '105 MB',
@@ -63,10 +65,11 @@ class LlmModelPreset {
           description:
               'Ultra-fast tests, intent parsing, instant scheduling (>60 tok/s).',
           recommendedContext: 2048,
+          minSizeBytes: 95 * 1024 * 1024,
         ),
         LlmModelPreset(
           id: 'qwen2.5-0.5b',
-          name: 'Qwen 2.5 0.5B',
+          name: 'Qwen 2.5 0.5B Instruct',
           parameters: '0.5B',
           quant: 'Q4_K_M',
           sizeMb: '490 MB',
@@ -78,10 +81,11 @@ class LlmModelPreset {
           description:
               'Recommended Academic: Excellent reasoning, math & coding.',
           recommendedContext: 2048,
+          minSizeBytes: 350 * 1024 * 1024,
         ),
         LlmModelPreset(
           id: 'llama3.2-1b',
-          name: 'Llama 3.2 1B',
+          name: 'Llama 3.2 1B Instruct',
           parameters: '1.2B',
           quant: 'Q4_K_M',
           sizeMb: '808 MB',
@@ -94,6 +98,7 @@ class LlmModelPreset {
           description:
               'Flagship: Deep syllabus explanations, multi-step RAG citations.',
           recommendedContext: 2048,
+          minSizeBytes: 750 * 1024 * 1024,
         ),
       ];
 }

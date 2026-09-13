@@ -44,6 +44,13 @@ void main() async {
   // Start background timetable recording scheduler
   RecordingScheduler.instance.start();
 
+  // Reconcile scheduled notification reminders with loaded classes & deadlines
+  PalNotificationService.instance.setNavigatorKey(PalApp.navigatorKey);
+  PalNotificationService.instance.reconcileSchedules(
+    classes: TimetableService.instance.entries,
+    deadlines: DeadlineService.instance.deadlines,
+  );
+
   // Non-blocking initialization of heavy native AI services
   SttService.instance.init();
   LlmService.instance.init();
@@ -52,11 +59,15 @@ void main() async {
 }
 
 class PalApp extends StatelessWidget {
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   const PalApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Pal Academic Copilot',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,

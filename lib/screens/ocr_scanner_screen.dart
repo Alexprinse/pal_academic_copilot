@@ -2,8 +2,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/ocr_document_context.dart';
 import '../services/ocr_service.dart';
 import '../theme/app_theme.dart';
+import 'pal_brain_screen.dart';
+import 'study_vault/save_to_vault_dialog.dart';
 
 class OcrScannerScreen extends StatefulWidget {
   final Function(int, {String? initialQuery}) onNavigateToBrain;
@@ -17,6 +20,12 @@ class OcrScannerScreen extends StatefulWidget {
 class _OcrScannerScreenState extends State<OcrScannerScreen> {
   final OcrService _ocrService = OcrService.instance;
   final TextEditingController _textController = TextEditingController();
+  String? _currentDocumentTitle;
+
+  @visibleForTesting
+  void setDocumentTitleForTesting(String? title) {
+    setState(() => _currentDocumentTitle = title);
+  }
 
   final List<Map<String, String>> _recentScans = [
     {
@@ -100,6 +109,7 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
 
   void _loadRecentScan(Map<String, String> item) {
     setState(() {
+      _currentDocumentTitle = item['title'];
       _textController.text = item['sampleText'] ?? '';
     });
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -203,48 +213,59 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              InkWell(
-                onTap: () {
-                  if (Navigator.canPop(context)) {
-                    Navigator.pop(context);
-                  }
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: const Padding(
-                  padding: EdgeInsets.all(6),
-                  child: Icon(
-                    Icons.arrow_back,
-                    color: AppTheme.textPrimary,
-                    size: 20,
+          Expanded(
+            child: Row(
+              children: [
+                if (Navigator.canPop(context)) ...[
+                  InkWell(
+                    onTap: () {
+                      if (Navigator.canPop(context)) {
+                        Navigator.pop(context);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(
+                        Icons.arrow_back,
+                        color: AppTheme.textPrimary,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Text(
+                        'Textbook & Notes OCR',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Extract text from your study materials',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
-                    'Textbook & Notes OCR',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.3,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Extract text from your study materials',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.info_outline, size: 20),
@@ -267,45 +288,53 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
         border: Border.all(color: AppTheme.cardBorder),
         boxShadow: AppTheme.cardShadow,
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 4,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: AppTheme.trustPillText,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'On-Device OCR',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppTheme.trustPillFill,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  '● Ready',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
                     color: AppTheme.trustPillText,
+                    shape: BoxShape.circle,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                const Text(
+                  'On-Device OCR',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppTheme.trustPillFill,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    '● Ready',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.trustPillText,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           Text(
             lastResult != null
@@ -378,38 +407,42 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
                     backgroundColor: AppTheme.primaryAccent,
                     foregroundColor: Colors.white,
                     elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   onPressed: () => _capture(ImageSource.camera),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.camera_alt_rounded, size: 18),
-                      SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Camera Scan',
-                            style: TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w800,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.camera_alt_rounded, size: 18),
+                        SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Camera Scan',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Scan a page or note',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.white70,
+                            Text(
+                              'Scan a page or note',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.white70,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -421,39 +454,43 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
                     foregroundColor: AppTheme.textPrimary,
                     side: const BorderSide(color: AppTheme.cardBorder),
                     backgroundColor: AppTheme.canvasBg,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   onPressed: () => _capture(ImageSource.gallery),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.photo_library_outlined,
-                          size: 18, color: AppTheme.primaryAccent),
-                      SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Choose Photo',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.photo_library_outlined,
+                            size: 18, color: AppTheme.primaryAccent),
+                        SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Choose Photo',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Select from gallery',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: AppTheme.textSecondary,
+                            Text(
+                              'Select from gallery',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.textSecondary,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -569,32 +606,48 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
               const Icon(Icons.check_circle,
                   color: AppTheme.trustPillText, size: 18),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Recognized Text',
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.textPrimary,
-                  ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Recognized Text',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    if (_currentDocumentTitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        _currentDocumentTitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryAccent,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppTheme.neutralPillFill,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '$wordCount words · $charCount chars',
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
+              const SizedBox(width: 8),
+              IconButton(
+                iconSize: 18,
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(),
+                icon: const Icon(Icons.bookmark_add_outlined,
+                    color: AppTheme.primaryAccent),
+                tooltip: 'Save to Study Vault',
+                onPressed: _showSaveToVaultDialog,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               IconButton(
                 iconSize: 18,
                 padding: const EdgeInsets.all(6),
@@ -614,8 +667,33 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
                 onPressed: () {
                   _ocrService.clear();
                   _textController.clear();
+                  _currentDocumentTitle = null;
                   setState(() {});
                 },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Metadata badge row
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.neutralPillFill,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$wordCount words · $charCount chars',
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
               ),
             ],
           ),
@@ -693,13 +771,15 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
             children: const [
               Icon(Icons.auto_awesome, size: 16, color: AppTheme.primaryAccent),
               SizedBox(width: 8),
-              Text(
-                'What would you like to do?',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.3,
-                  color: AppTheme.textPrimary,
+              Expanded(
+                child: Text(
+                  'What would you like to do?',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
               ),
             ],
@@ -721,15 +801,7 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
             subtitle: 'Step-by-step explanation with proofs & formulas',
             isEnabled: hasText,
             isPrimary: true,
-            onTap: () {
-              if (hasText) {
-                widget.onNavigateToBrain(
-                  2,
-                  initialQuery:
-                      'Solve and explain the following question step-by-step with proofs:\n\n${_textController.text.trim()}',
-                );
-              }
-            },
+            onTap: () => _handleAiAction('explain'),
           ),
           const SizedBox(height: 8),
           _buildAiActionTile(
@@ -738,15 +810,7 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
             subtitle: 'Create concise study notes and key takeaways',
             isEnabled: hasText,
             isPrimary: false,
-            onTap: () {
-              if (hasText) {
-                widget.onNavigateToBrain(
-                  2,
-                  initialQuery:
-                      'Summarize these textbook notes into bullet points and key formulas:\n\n${_textController.text.trim()}',
-                );
-              }
-            },
+            onTap: () => _handleAiAction('summarize'),
           ),
           const SizedBox(height: 8),
           _buildAiActionTile(
@@ -755,17 +819,101 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
             subtitle: 'Generate 3 exam practice questions with answers',
             isEnabled: hasText,
             isPrimary: false,
-            onTap: () {
-              if (hasText) {
-                widget.onNavigateToBrain(
-                  2,
-                  initialQuery:
-                      'Generate 3 conceptual exam questions based on this scanned excerpt:\n\n${_textController.text.trim()}',
-                );
-              }
-            },
+            onTap: () => _handleAiAction('quiz'),
+          ),
+          const SizedBox(height: 8),
+          _buildAiActionTile(
+            icon: Icons.folder_special_outlined,
+            title: 'Save to Study Vault',
+            subtitle: 'Index into Subject & Unit, or save to Unorganized',
+            isEnabled: hasText,
+            isPrimary: false,
+            onTap: _showSaveToVaultDialog,
           ),
         ],
+      ),
+    );
+  }
+
+  static String _formatShortDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
+  void _handleAiAction(String actionType) {
+    final text = _textController.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No readable text was found.'),
+          backgroundColor: AppTheme.cardSurface,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final now = DateTime.now();
+    final docTitle = (_currentDocumentTitle != null &&
+            _currentDocumentTitle!.trim().isNotEmpty)
+        ? _currentDocumentTitle!.trim()
+        : 'Notes · ${_formatShortDate(now)}';
+
+    final docId = 'ocr_${now.millisecondsSinceEpoch}';
+
+    final ocrContext = OcrDocumentContext(
+      id: docId,
+      title: docTitle,
+      text: text,
+      pageCount: 1,
+      actionType: actionType,
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PalBrainScreen(
+          ocrDocument: ocrContext,
+        ),
+      ),
+    );
+  }
+
+  void _showSaveToVaultDialog() {
+    final text = _textController.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No recognized text to save.'),
+          backgroundColor: AppTheme.cardSurface,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SaveToVaultDialog(
+        text: text,
+        initialTitle: _currentDocumentTitle,
       ),
     );
   }

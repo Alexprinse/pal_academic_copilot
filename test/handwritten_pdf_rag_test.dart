@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,17 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUpAll(() {
+    for (final channel in [
+      'plugins.flutter.io/path_provider',
+      'plugins.flutter.io/path_provider_macos',
+    ]) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        MethodChannel(channel),
+        (MethodCall methodCall) async => Directory.systemTemp.path,
+      );
+    }
+
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
       const MethodChannel('com.iqoo.pal/pdf_renderer'),
@@ -233,7 +245,8 @@ void main() {
         ),
       );
 
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
 
       // Check header and 100% On-Device OCR indicator
       expect(find.text('Lecture_Notes_Process_Sync_Handwritten.pdf'),
@@ -251,7 +264,8 @@ void main() {
 
       // Switch to page 2
       await tester.tap(find.text('p.2'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
 
       // Enter new text in editor
       final textField = find.byType(TextField);
@@ -267,7 +281,10 @@ void main() {
       await tester.ensureVisible(saveBtn);
       await tester.tap(saveBtn);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.runAsync(() async {
+        await Future.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pump();
 
       // Verify page 2 updated
       final updatedPages = rag.getExtractedPages(doc.name);

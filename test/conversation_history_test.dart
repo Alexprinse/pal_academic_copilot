@@ -169,7 +169,7 @@ void main() {
       // Verify Chat History drawer is visible
       expect(find.text('Chat History'), findsOneWidget);
       expect(find.text('Search conversations...'), findsOneWidget);
-      expect(find.text('New Chat'), findsWidgets);
+      expect(find.byTooltip('New Chat'), findsWidgets);
     });
 
     testWidgets('New Chat button creates a new conversation session',

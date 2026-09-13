@@ -1,3 +1,4 @@
+import 'practice_exam.dart';
 import 'vault_item.dart';
 
 class AcademicChatMessage {
@@ -11,6 +12,7 @@ class AcademicChatMessage {
   final String? audioCitation;
   final String? evidenceSnippet;
   bool isGenerating;
+  GroundedPracticeExam? practiceExam;
 
   AcademicChatMessage({
     required this.id,
@@ -23,6 +25,7 @@ class AcademicChatMessage {
     this.audioCitation,
     this.evidenceSnippet,
     this.isGenerating = false,
+    this.practiceExam,
   });
 
   bool get isUser => role == 'user';
@@ -40,6 +43,7 @@ class AcademicChatMessage {
       'citations': citations.map((c) => c.toMap()).toList(),
       'audioCitation': audioCitation,
       'evidenceSnippet': evidenceSnippet,
+      'practiceExam': practiceExam?.toMap(),
     };
   }
 
@@ -60,6 +64,10 @@ class AcademicChatMessage {
       audioCitation: map['audioCitation'] as String?,
       evidenceSnippet: map['evidenceSnippet'] as String?,
       isGenerating: false,
+      practiceExam: map['practiceExam'] != null
+          ? GroundedPracticeExam.fromMap(
+              map['practiceExam'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -74,6 +82,7 @@ class AcademicChatMessage {
     String? audioCitation,
     String? evidenceSnippet,
     bool? isGenerating,
+    GroundedPracticeExam? practiceExam,
   }) {
     return AcademicChatMessage(
       id: id ?? this.id,
@@ -86,6 +95,7 @@ class AcademicChatMessage {
       audioCitation: audioCitation ?? this.audioCitation,
       evidenceSnippet: evidenceSnippet ?? this.evidenceSnippet,
       isGenerating: isGenerating ?? this.isGenerating,
+      practiceExam: practiceExam ?? this.practiceExam,
     );
   }
 }

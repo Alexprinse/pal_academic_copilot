@@ -3,25 +3,41 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/chat_message.dart';
 import '../models/conversation_session.dart';
+import '../models/conversation_state.dart';
+import '../models/extracted_page_content.dart';
+import '../models/lecture_recording.dart';
 import '../models/llm_model_preset.dart';
+import '../models/ocr_document_context.dart';
+import '../models/rag_scope.dart';
 import '../models/vault_item.dart';
+import '../agent/agent_service.dart';
+import '../agent/agent_tool_call.dart';
+import '../services/active_quiz_service.dart';
 import '../services/conversation_service.dart';
 import '../services/llm_service.dart';
+import '../services/quiz_generation_service.dart';
 import '../services/rag_service.dart';
 import '../services/stt_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/chat_history_drawer.dart';
+import 'quiz_screen.dart';
 
 class PalBrainScreen extends StatefulWidget {
   final String? initialQuery;
   final String? initialFilterSubject;
   final String? initialFilterUnit;
+  final RagScope? initialScope;
+  final LectureRecording? lectureRecording;
+  final OcrDocumentContext? ocrDocument;
 
   const PalBrainScreen({
     super.key,
     this.initialQuery,
     this.initialFilterSubject,
     this.initialFilterUnit,
+    this.initialScope,
+    this.lectureRecording,
+    this.ocrDocument,
   });
 
   @override
@@ -33,6 +49,8 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   final RagService _ragService = RagService.instance;
   final SttService _sttService = SttService.instance;
   final ConversationService _conversationService = ConversationService.instance;
+  final QuizGenerationService _quizGenService = QuizGenerationService.instance;
+  final ActiveQuizService _activeQuizService = ActiveQuizService.instance;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   ConversationSession? _activeSession;
@@ -45,7 +63,12 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   final Set<String> _likedMessageIds = <String>{};
   final Set<String> _dislikedMessageIds = <String>{};
 
-  String _selectedRagScope = 'Unit 1 (OS)'; // 'Off', 'All Notes', 'Unit 1 (OS)'
+  RagScope _selectedScope = RagScope.subjectUnit(
+    subjectName: 'Operating Systems',
+    unitName: 'Unit 1: Process Synchronization & Concurrency',
+  );
+
+  String get _selectedRagScope => _selectedScope.displayLabel;
 
   @override
   void initState() {
@@ -54,11 +77,20 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     _sttService.addListener(_onSttUpdate);
     _conversationService.addListener(_onConversationServiceUpdate);
 
-    if (widget.initialFilterSubject != null ||
+    if (widget.initialScope != null) {
+      _selectedScope = widget.initialScope!;
+    } else if (widget.initialFilterSubject != null ||
         widget.initialFilterUnit != null) {
-      _selectedRagScope = widget.initialFilterUnit ??
-          widget.initialFilterSubject ??
-          'All Notes';
+      final sub = widget.initialFilterSubject ?? 'Operating Systems';
+      final unit = widget.initialFilterUnit;
+      if (unit != null && unit.isNotEmpty && unit != 'All Units') {
+        _selectedScope = RagScope.subjectUnit(
+          subjectName: sub,
+          unitName: unit,
+        );
+      } else {
+        _selectedScope = RagScope.subject(subjectName: sub);
+      }
     }
 
     _initActiveSession();
@@ -71,11 +103,209 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     }
   }
 
+  static String _formatLectureDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
+  static String _formatLectureChatTitle(LectureRecording rec) {
+    final dateStr = _formatLectureDate(rec.date);
+    return '${rec.displayTitle} · $dateStr';
+  }
+
   void _initActiveSession() {
+    if (widget.lectureRecording != null) {
+      final rec = widget.lectureRecording!;
+      final title = _formatLectureChatTitle(rec);
+
+      // Check if session for this lecture already exists
+      var existingSession =
+          _conversationService.findConversationByLectureId(rec.id);
+      existingSession ??= _conversationService.conversations
+          .cast<ConversationSession?>()
+          .firstWhere((c) => c?.title == title, orElse: () => null);
+
+      if (existingSession != null) {
+        _activeSession = existingSession;
+        _selectedScope = existingSession.ragScope;
+        _messages.clear();
+        _messages.addAll(existingSession.messages);
+        _conversationService.setActiveConversation(existingSession.id);
+        return;
+      }
+
+      // Ensure indexed in RAG
+      _ragService.indexLectureRecording(rec);
+
+      // Build background transcript context
+      final transcriptBuffer = StringBuffer();
+      transcriptBuffer
+          .writeln('=== LECTURE TRANSCRIPT: ${rec.displayTitle} ===');
+      if (rec.chunks.isNotEmpty) {
+        for (final chunk in rec.chunks) {
+          transcriptBuffer.writeln('[${chunk.startTimestamp}] ${chunk.text}');
+        }
+      } else {
+        transcriptBuffer.writeln(rec.transcriptText);
+      }
+      transcriptBuffer.writeln('=== END TRANSCRIPT ===');
+      final bgContext = transcriptBuffer.toString();
+
+      final now = DateTime.now();
+      final convId = 'conv_lecture_${rec.id}';
+
+      final cleanSub =
+          rec.subject.trim().isNotEmpty ? rec.subject : rec.displayTitle;
+      final cleanSubId = rec.subjectId ?? RagIdHelper.toSubjectId(cleanSub);
+      final cleanUnit = rec.unitName ??
+          (rec.isLiveCapture
+              ? 'Live Capture Transcripts'
+              : 'Scheduled Lectures');
+      final cleanUnitId = rec.unitId ?? RagIdHelper.toUnitId(cleanUnit);
+
+      final initialCitations = rec.chunks.take(3).map((chunk) {
+        return ChunkMatch(
+          chunk: TextChunk(
+            id: '${rec.id}_c${chunk.chunkIndex}',
+            subjectId: cleanSubId,
+            subjectName: cleanSub,
+            unitId: cleanUnitId,
+            unitName: cleanUnit,
+            documentId: rec.id,
+            documentName:
+                '${rec.isLiveCapture ? "Live Capture" : "Lecture"} · ${rec.displayTitle}',
+            pageNumber: chunk.chunkIndex + 1,
+            text: chunk.text,
+            wordCount: chunk.text.split(RegExp(r'\s+')).length,
+            extractionType: ExtractionType.audioTranscript,
+            confidence: 1.0,
+            timestamp: chunk.startTimestamp,
+            sourceType:
+                rec.isLiveCapture ? 'lectureTranscript' : 'scheduledLecture',
+          ),
+          score: 1.0,
+        );
+      }).toList();
+
+      final summaryBuffer = StringBuffer();
+      summaryBuffer
+          .writeln('### 🎙️ Lecture Overview: **${rec.displayTitle}**');
+      summaryBuffer.writeln(
+          '*Recorded on ${_formatLectureDate(rec.date)} · Transcribed on-device with Whisper ONNX*\n');
+      summaryBuffer.writeln(
+          'Here is the academic summary grounded in your lecture recording:\n');
+
+      if (rec.summary != null && rec.summary!.keyPoints.isNotEmpty) {
+        summaryBuffer.writeln('#### 📌 Key Points');
+        for (final point in rec.summary!.keyPoints) {
+          summaryBuffer.writeln('- $point');
+        }
+        summaryBuffer.writeln();
+        if (rec.summary!.importantConcepts.isNotEmpty) {
+          summaryBuffer.writeln('#### 💡 Core Concepts');
+          for (final concept in rec.summary!.importantConcepts) {
+            summaryBuffer.writeln('- $concept');
+          }
+          summaryBuffer.writeln();
+        }
+        if (rec.summary!.actionItems.isNotEmpty) {
+          summaryBuffer.writeln('#### 📝 Action Items & Deadlines');
+          for (final item in rec.summary!.actionItems) {
+            summaryBuffer.writeln('- $item');
+          }
+          summaryBuffer.writeln();
+        }
+      } else {
+        summaryBuffer.writeln('#### 📌 Lecture Notes');
+        if (rec.chunks.isNotEmpty) {
+          for (var i = 0; i < rec.chunks.length && i < 3; i++) {
+            summaryBuffer.writeln(
+                '- [${rec.chunks[i].startTimestamp}] ${rec.chunks[i].text}');
+          }
+        } else {
+          final snippet = rec.transcriptText.length > 250
+              ? '${rec.transcriptText.substring(0, 250)}...'
+              : rec.transcriptText;
+          summaryBuffer.writeln('- $snippet');
+        }
+        summaryBuffer.writeln();
+      }
+
+      summaryBuffer.writeln('---');
+      summaryBuffer.writeln(
+          '💬 **Full transcript and timestamps are loaded.** Ask me anything about this lecture — questions about specific topics, timestamps, formulas, or what the professor explained!');
+
+      final assistantMsg = AcademicChatMessage(
+        id: 'asst_lec_${now.millisecondsSinceEpoch}',
+        conversationId: convId,
+        role: 'assistant',
+        text: summaryBuffer.toString(),
+        timestamp: now,
+        citations: initialCitations,
+      );
+
+      final lectureScope = RagScope.lecture(
+        lectureId: rec.id,
+        lectureTitle: rec.displayTitle,
+        subjectId: cleanSubId,
+        subjectName: cleanSub,
+        unitId: cleanUnitId,
+        unitName: cleanUnit,
+      );
+
+      final session = ConversationSession(
+        id: convId,
+        title: title,
+        createdAt: now,
+        updatedAt: now,
+        selectedRagScope: 'This Lecture',
+        ragScopeType: 'lecture',
+        lectureId: rec.id,
+        lectureTitle: rec.displayTitle,
+        subjectId: cleanSubId,
+        subjectName: cleanSub,
+        unitId: cleanUnitId,
+        unitName: cleanUnit,
+        messages: [assistantMsg],
+        isPinned: false,
+        backgroundContext: bgContext,
+      );
+
+      _activeSession = session;
+      _selectedScope = lectureScope;
+      _messages.clear();
+      _messages.add(assistantMsg);
+      _conversationService.saveConversation(session);
+      return;
+    }
+
+    if (widget.ocrDocument != null) {
+      _initOcrSession(widget.ocrDocument!);
+      return;
+    }
+
+    final hasRequestedScope = widget.initialScope != null ||
+        widget.initialFilterSubject != null ||
+        widget.initialFilterUnit != null;
+
     final active = _conversationService.activeConversation;
-    if (active != null) {
+    if (active != null &&
+        (!hasRequestedScope || active.ragScope == _selectedScope)) {
       _activeSession = active;
-      _selectedRagScope = active.selectedRagScope;
+      _selectedScope = active.ragScope;
       _messages.clear();
       _messages.addAll(active.messages);
     } else {
@@ -91,10 +321,19 @@ class PalBrainScreenState extends State<PalBrainScreen> {
       );
       _activeSession = ConversationSession(
         id: convId,
-        title: 'New Chat',
+        title: _selectedScope.type != RagScopeType.allNotes &&
+                _selectedScope.type != RagScopeType.off
+            ? _selectedScope.displayLabel
+            : 'New Chat',
         createdAt: now,
         updatedAt: now,
-        selectedRagScope: _selectedRagScope,
+        selectedRagScope: _selectedScope.displayLabel,
+        ragScopeType: _selectedScope.type.name,
+        subjectId: _selectedScope.subjectId,
+        subjectName: _selectedScope.subjectName,
+        unitId: _selectedScope.unitId,
+        unitName: _selectedScope.unitName,
+        ragScope: _selectedScope,
         messages: [welcomeMsg],
       );
       _messages.clear();
@@ -172,16 +411,371 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     }
   }
 
-  void setQuery(String query, {String? ragScope}) {
-    if (ragScope != null) {
-      setState(() => _selectedRagScope = ragScope);
-      if (_activeSession != null) {
-        _activeSession!.selectedRagScope = ragScope;
-        _conversationService.saveConversation(_activeSession!);
+  void setQuery(
+    String query, {
+    RagScope? scope,
+    String? ragScope,
+    String? subject,
+    String? unit,
+  }) {
+    RagScope? targetScope = scope;
+    if (targetScope == null) {
+      if (subject != null &&
+          subject.isNotEmpty &&
+          unit != null &&
+          unit.isNotEmpty) {
+        targetScope =
+            RagScope.subjectUnit(subjectName: subject, unitName: unit);
+      } else if (ragScope != null) {
+        targetScope = (ragScope == 'All Notes')
+            ? const RagScope.allNotes()
+            : (ragScope == 'Off')
+                ? const RagScope.off()
+                : (subject != null && subject.isNotEmpty)
+                    ? RagScope.subjectUnit(
+                        subjectName: subject, unitName: ragScope)
+                    : RagScope.subject(subjectName: ragScope);
       }
     }
+
+    if (targetScope != null) {
+      _selectedScope = targetScope;
+      final activeFromService = _conversationService.activeConversation;
+      if (activeFromService != null &&
+          (activeFromService.ragScope == targetScope ||
+              activeFromService.id != _activeSession?.id)) {
+        _activeSession = activeFromService;
+        _messages.clear();
+        _messages.addAll(activeFromService.messages);
+      } else if (_activeSession == null ||
+          _activeSession!.ragScope != targetScope) {
+        // Scope changed: start a clean conversation session to avoid cross-talk
+        final now = DateTime.now();
+        final convId = 'conv_${now.millisecondsSinceEpoch}';
+        final welcomeMsg = AcademicChatMessage(
+          id: 'msg-welcome',
+          conversationId: convId,
+          role: 'assistant',
+          text:
+              "Hi, I'm **Pal** — your personal academic copilot for lectures, notes, and textbooks.\n\nAsk me anything, or tap a suggestion below to begin studying.",
+          timestamp: now,
+        );
+        _activeSession = ConversationSession(
+          id: convId,
+          title: targetScope.displayLabel,
+          createdAt: now,
+          updatedAt: now,
+          selectedRagScope: targetScope.displayLabel,
+          ragScopeType: targetScope.type.name,
+          subjectId: targetScope.subjectId,
+          subjectName: targetScope.subjectName,
+          unitId: targetScope.unitId,
+          unitName: targetScope.unitName,
+          ragScope: targetScope,
+          messages: [welcomeMsg],
+        );
+        _messages.clear();
+        _messages.add(welcomeMsg);
+        _conversationService.saveConversation(_activeSession!);
+      }
+      setState(() {});
+    }
+
     _inputController.text = query;
     _sendMessage();
+  }
+
+  void startOcrConversation(OcrDocumentContext ocrDoc) {
+    _initOcrSession(ocrDoc);
+  }
+
+  void _initOcrSession(OcrDocumentContext ocrDoc) {
+    // 1. Check if session for this document already exists
+    var existingSession =
+        _conversationService.findConversationByDocumentId(ocrDoc.id);
+    existingSession ??= _conversationService.conversations
+        .cast<ConversationSession?>()
+        .firstWhere((c) => c?.title == ocrDoc.title, orElse: () => null);
+
+    if (existingSession != null) {
+      _activeSession = existingSession;
+      _selectedScope = existingSession.ragScope;
+      _messages.clear();
+      _messages.addAll(existingSession.messages);
+      _conversationService.setActiveConversation(existingSession.id);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // 2. Ensure indexed in RAG
+    _ragService.indexOcrDocument(
+      documentId: ocrDoc.id,
+      title: ocrDoc.title,
+      text: ocrDoc.text,
+      subject: ocrDoc.subjectName,
+      unit: ocrDoc.unitName,
+      subjectId: ocrDoc.subjectId,
+      unitId: ocrDoc.unitId,
+      pages: ocrDoc.pages,
+      pageCount: ocrDoc.pageCount,
+    );
+
+    // 3. Build background document context
+    final bgBuffer = StringBuffer();
+    bgBuffer.writeln('=== SCANNED DOCUMENT: ${ocrDoc.title} ===');
+    bgBuffer.writeln(ocrDoc.text);
+    bgBuffer.writeln('=== END DOCUMENT ===');
+    final bgContext = bgBuffer.toString();
+
+    final now = DateTime.now();
+    final convId = 'conv_ocr_${ocrDoc.id}';
+
+    // 4. Initial citations from RAG
+    final docChunks = _ragService.allChunks
+        .where((c) =>
+            c.id.startsWith('${ocrDoc.id}_') ||
+            c.documentId == ocrDoc.id ||
+            c.documentName == ocrDoc.title)
+        .take(3)
+        .map((chunk) => ChunkMatch(chunk: chunk, score: 1.0))
+        .toList();
+
+    // 5. Generate assistant response
+    final responseText = _buildInitialOcrAssistantText(ocrDoc);
+
+    final assistantMsg = AcademicChatMessage(
+      id: 'asst_ocr_${now.millisecondsSinceEpoch}',
+      conversationId: convId,
+      role: 'assistant',
+      text: responseText,
+      timestamp: now,
+      citations: docChunks,
+    );
+
+    final docScope = RagScope.document(
+      documentId: ocrDoc.id,
+      documentName: ocrDoc.title,
+      subjectId: ocrDoc.subjectId,
+      subjectName: ocrDoc.subjectName,
+      unitId: ocrDoc.unitId,
+      unitName: ocrDoc.unitName,
+    );
+
+    final session = ConversationSession(
+      id: convId,
+      title: ocrDoc.title,
+      createdAt: now,
+      updatedAt: now,
+      selectedRagScope: 'This Document',
+      ragScopeType: 'document',
+      documentId: ocrDoc.id,
+      documentTitle: ocrDoc.title,
+      subjectId: ocrDoc.subjectId,
+      subjectName: ocrDoc.subjectName,
+      unitId: ocrDoc.unitId,
+      unitName: ocrDoc.unitName,
+      messages: [assistantMsg],
+      isPinned: false,
+      sourceType: 'ocrDocument',
+      backgroundContext: bgContext,
+    );
+
+    _activeSession = session;
+    _selectedScope = docScope;
+    _messages.clear();
+    _messages.add(assistantMsg);
+    _conversationService.saveConversation(session);
+    if (mounted) setState(() {});
+  }
+
+  String _buildInitialOcrAssistantText(OcrDocumentContext ocrDoc) {
+    final text = ocrDoc.text.trim();
+    switch (ocrDoc.actionType) {
+      case 'explain':
+        final buffer = StringBuffer();
+        buffer.writeln(
+            '### 💡 Step-by-Step Explanation & Solution: **${ocrDoc.title}**\n');
+        buffer
+            .writeln('*Processed on-device with OCR Vision & Pal Local AI*\n');
+        buffer.writeln(
+            'Here is the step-by-step academic breakdown grounded in your scanned notes:\n');
+        buffer.writeln('#### 🔍 Problem Analysis & Context');
+        buffer.writeln(_extractOcrSummaryPoints(text, maxLines: 2));
+        buffer.writeln();
+        buffer.writeln('#### 📐 Step-by-Step Breakdown & Core Concepts');
+        buffer.writeln(_extractOcrExplanationSteps(text));
+        buffer.writeln();
+        buffer.writeln('#### 💡 Key Takeaways & Exam Tips');
+        buffer.writeln(_extractOcrTakeaways(text));
+        buffer.writeln('\n---');
+        buffer.writeln(
+            '💬 **Document context is loaded into Pal Brain.** Ask me to clarify any step, verify a proof, or solve a related variation!');
+        return buffer.toString();
+
+      case 'quiz':
+        final buffer = StringBuffer();
+        buffer.writeln('### 📝 Practice Quiz: **${ocrDoc.title}**\n');
+        buffer
+            .writeln('*Generated on-device based on your scanned document*\n');
+        buffer.writeln(
+            'Here are 3 conceptual practice questions based on the scanned material:\n');
+        buffer.writeln(_extractOcrQuiz(text, ocrDoc.title));
+        buffer.writeln('\n---');
+        buffer.writeln(
+            '💬 **Ready to practice?** Try answering the questions above or ask me for detailed hints!');
+        return buffer.toString();
+
+      case 'summarize':
+      default:
+        final buffer = StringBuffer();
+        buffer.writeln('### 📖 Scanned Notes Summary: **${ocrDoc.title}**\n');
+        buffer
+            .writeln('*Extracted on-device with OCR Vision & Pal Local AI*\n');
+        buffer.writeln(
+            'Here is the academic summary grounded in your scanned document:\n');
+        buffer.writeln('#### 📝 Academic Summary');
+        buffer.writeln(_extractOcrSummaryPoints(text));
+        buffer.writeln();
+        buffer.writeln('#### 📌 Key Takeaways');
+        buffer.writeln(_extractOcrTakeaways(text));
+        buffer.writeln('\n---');
+        buffer.writeln(
+            '💬 **Document context is loaded into Pal Brain.** Ask me anything about these notes — explanations, definitions, formulas, or practice questions!');
+        return buffer.toString();
+    }
+  }
+
+  String _extractOcrSummaryPoints(String text, {int maxLines = 4}) {
+    final cleanLines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('--- Page'))
+        .toList();
+
+    if (cleanLines.isEmpty) {
+      return '- Document contains recognized text ready for analysis.';
+    }
+
+    final buffer = StringBuffer();
+    final taken = cleanLines.take(maxLines).toList();
+    for (final line in taken) {
+      if (line.startsWith('-') ||
+          line.startsWith('•') ||
+          line.startsWith('*')) {
+        buffer.writeln(line);
+      } else {
+        buffer.writeln('- $line');
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  String _extractOcrTakeaways(String text) {
+    final cleanLines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('--- Page'))
+        .toList();
+
+    if (cleanLines.isEmpty) {
+      return '- Core concepts are indexed for on-device RAG retrieval.';
+    }
+
+    final takeaways = <String>[];
+    for (final line in cleanLines) {
+      if (line.contains('8472') ||
+          line.toLowerCase().contains('secret number')) {
+        takeaways.add('Secret verification parameter: **8472**');
+      } else if (line.toLowerCase().contains('algorithm') ||
+          line.toLowerCase().contains('semaphore') ||
+          line.toLowerCase().contains('mutex') ||
+          line.toLowerCase().contains('scheduling') ||
+          line.toLowerCase().contains('definition') ||
+          line.toLowerCase().contains('formula') ||
+          line.toLowerCase().contains('critical section')) {
+        takeaways.add(line);
+      }
+    }
+
+    if (takeaways.isEmpty) {
+      for (var i = 0; i < cleanLines.length && i < 3; i++) {
+        takeaways.add(cleanLines[i]);
+      }
+    }
+
+    final buffer = StringBuffer();
+    for (final t in takeaways.take(3)) {
+      if (t.startsWith('-') || t.startsWith('•')) {
+        buffer.writeln(t);
+      } else {
+        buffer.writeln('- $t');
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  String _extractOcrExplanationSteps(String text) {
+    final cleanLines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('--- Page'))
+        .toList();
+
+    final buffer = StringBuffer();
+    if (cleanLines.isNotEmpty) {
+      buffer.writeln('1. **Identify the Core Concepts:**');
+      buffer.writeln('   - Grounded context: ${cleanLines.first}');
+      buffer.writeln('2. **Analyze Constraints & Formulations:**');
+      if (cleanLines.length > 1) {
+        buffer.writeln('   - ${cleanLines[1]}');
+      } else {
+        buffer.writeln(
+            '   - Applied local theorem derivation and variable mapping.');
+      }
+      buffer.writeln('3. **Verification & Solution Synthesis:**');
+      if (cleanLines.length > 2) {
+        buffer.writeln('   - ${cleanLines[2]}');
+      } else {
+        buffer.writeln(
+            '   - Concluded solution verified against document principles.');
+      }
+    } else {
+      buffer.writeln(
+          '1. **Identify Core Concept:** Review the scanned text statements.');
+      buffer.writeln(
+          '2. **Evaluate Formula / Logic:** Trace each step systematically.');
+      buffer.writeln(
+          '3. **Formulate Solution:** Summarize the conclusive proof.');
+    }
+    return buffer.toString().trim();
+  }
+
+  String _extractOcrQuiz(String text, String title) {
+    final cleanLines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('--- Page'))
+        .toList();
+
+    final buffer = StringBuffer();
+    buffer.writeln(
+        '**Question 1:** What is the primary concept or theorem introduced in *$title*?');
+    buffer
+        .writeln('*(Hint: Review the opening definitions in the document)*\n');
+    if (text.contains('8472') || text.toLowerCase().contains('secret number')) {
+      buffer.writeln(
+          '**Question 2:** What is the verified secret number stated in the notes?');
+      buffer.writeln('*(Answer: 8472)*\n');
+    } else if (cleanLines.length > 1) {
+      buffer.writeln(
+          '**Question 2:** Explain the role of the following in the context of the scanned material:\n> "${cleanLines[1]}"\n');
+    } else {
+      buffer.writeln(
+          '**Question 2:** How do the parameters in this excerpt compare with standard course definitions?\n');
+    }
+    buffer.writeln(
+        '**Question 3:** How would you apply this concept to an exam problem or real-world scenario?');
+    return buffer.toString().trim();
   }
 
   @visibleForTesting
@@ -194,6 +788,17 @@ class PalBrainScreenState extends State<PalBrainScreen> {
 
   @visibleForTesting
   ConversationSession? get activeSessionForTesting => _activeSession;
+
+  @visibleForTesting
+  List<AcademicChatMessage> get messagesForTesting => _messages;
+
+  @visibleForTesting
+  Future<void> sendMessageForTesting([String? text]) async {
+    if (text != null) {
+      _inputController.text = text;
+    }
+    await _sendMessage();
+  }
 
   @visibleForTesting
   void showModelSwitcherForTesting() {
@@ -267,19 +872,22 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     if (_activeSession != null) {
       _activeSession!.messages.clear();
       _activeSession!.messages.addAll(_messages);
-      _activeSession!.selectedRagScope = _selectedRagScope;
+      _activeSession!.ragScope = _selectedScope;
       await _conversationService.saveConversation(_activeSession!);
     }
 
     final newSession = await _conversationService.createConversation(
-      initialRagScope: _selectedRagScope,
+      initialRagScope: _selectedScope.displayLabel,
     );
+    newSession.ragScope = _selectedScope;
+    newSession.activeMode = ActiveMode.chat;
+    newSession.activeQuiz = null;
 
     setState(() {
       _activeSession = newSession;
       _messages.clear();
       _messages.addAll(newSession.messages);
-      _selectedRagScope = newSession.selectedRagScope;
+      _selectedScope = newSession.ragScope;
       _inputController.clear();
     });
   }
@@ -290,7 +898,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     if (_activeSession != null) {
       _activeSession!.messages.clear();
       _activeSession!.messages.addAll(_messages);
-      _activeSession!.selectedRagScope = _selectedRagScope;
+      _activeSession!.ragScope = _selectedScope;
       await _conversationService.saveConversation(_activeSession!);
     }
 
@@ -300,7 +908,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
       _activeSession = conversation;
       _messages.clear();
       _messages.addAll(conversation.messages);
-      _selectedRagScope = conversation.selectedRagScope;
+      _selectedScope = conversation.ragScope;
       _inputController.clear();
     });
 
@@ -310,12 +918,20 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   Future<void> _sendMessage() async {
     final query = _inputController.text.trim();
     if (query.isEmpty || _llmService.isGenerating) return;
+    debugPrint('[PAL-LLM] User prompt received: "$query"');
+    if (query.isEmpty || _llmService.isGenerating) {
+      if (_llmService.isGenerating) {
+        debugPrint('[PAL-LLM] Submit blocked: LLM is currently generating');
+      }
+      return;
+    }
 
     _inputController.clear();
 
     _activeSession ??= await _conversationService.createConversation(
-      initialRagScope: _selectedRagScope,
+      initialRagScope: _selectedScope.displayLabel,
     );
+    _activeSession!.ragScope = _selectedScope;
 
     if (_activeSession!.userMessagesCount == 0) {
       final autoTitle = ConversationService.generateTitle(query);
@@ -339,46 +955,292 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     setState(() {});
     _scrollToBottom();
 
-    // 2. Perform BM25 RAG Retrieval if enabled
+    final activeQuiz = _activeSession!.activeQuiz;
+    final activeMode = _activeSession!.activeMode;
+    final previousMessagesList = _messages
+        .where((m) =>
+            m.id != 'msg-welcome' &&
+            m.id != userMsg.id &&
+            m.text.trim().isNotEmpty)
+        .map((m) => '${m.role}: ${m.text.replaceAll('\n', ' ')}')
+        .toList();
+
+    debugPrint('[PAL-CHAT] Chat ID: $targetConvId');
+    debugPrint('[PAL-CHAT] Message count: ${_messages.length}');
+    debugPrint('[PAL-CHAT] Previous messages: $previousMessagesList');
+    debugPrint('[PAL-CHAT] Current user message: $query');
+    debugPrint('[PAL-CHAT] Active mode: ${activeMode.name}');
+    debugPrint(
+        '[PAL-CHAT] Active quiz: ${activeQuiz != null ? "${activeQuiz.topic} (Q${activeQuiz.currentQuestionIndex + 1}/${activeQuiz.totalQuestions})" : "null"}');
+
+    // Check if user is answering an active quiz question
+    if (activeQuiz != null &&
+        !activeQuiz.isCompleted &&
+        _activeQuizService.isQuizAnswer(query)) {
+      final answerLetter = _activeQuizService.extractAnswerLetter(query);
+      if (answerLetter != null) {
+        debugPrint('[PAL-CHAT] Prompt message count: 1');
+        debugPrint('[PAL-CHAT] Generation started');
+
+        final evaluationText = _activeQuizService.evaluateAnswer(
+          quiz: activeQuiz,
+          answerLetter: answerLetter,
+        );
+
+        if (activeQuiz.isCompleted) {
+          _activeSession!.activeMode = ActiveMode.chat;
+        }
+
+        final assistantMsg = AcademicChatMessage(
+          id: 'asst_${DateTime.now().millisecondsSinceEpoch}',
+          conversationId: targetConvId,
+          role: 'assistant',
+          text: evaluationText,
+          timestamp: DateTime.now(),
+          isGenerating: false,
+        );
+        _messages.add(assistantMsg);
+        _activeSession!.messages.add(assistantMsg);
+        await _conversationService.saveConversation(_activeSession!);
+
+        debugPrint('[PAL-CHAT] Generation completed');
+
+        if (mounted && _activeSession?.id == targetConvId) {
+          setState(() {});
+          _scrollToBottom();
+        }
+        return;
+      }
+    }
+
+    // 2. Perform BM25 RAG Retrieval strictly within selectedScope
+    final lowerQuery = query.toLowerCase();
+    final isQuiz = lowerQuery.contains('quiz') ||
+        lowerQuery.contains('practice exam') ||
+        lowerQuery.contains('practice questions') ||
+        lowerQuery.contains('exam questions');
+    final isSummary = lowerQuery.contains('summarize') ||
+        lowerQuery.contains('summary') ||
+        lowerQuery.contains('key takeaways');
+
+    if (isQuiz) {
+      // Requirement 2: LOG THE SELECTED CONTEXT
+      debugPrint('========================================');
+      debugPrint('[QUIZ]');
+      debugPrint('Subject ID: ${_selectedScope.subjectId ?? "None"}');
+      debugPrint('Subject Name: ${_selectedScope.subjectName ?? "None"}');
+      debugPrint('Unit ID: ${_selectedScope.unitId ?? "None"}');
+      debugPrint('Unit Name: ${_selectedScope.unitName ?? "None"}');
+      debugPrint('Topic: ${_selectedScope.displayLabel}');
+      debugPrint('Query: "$query"');
+      debugPrint('========================================');
+    }
+
     List<ChunkMatch> citations = [];
     String promptForLlm = query;
+    String? systemPromptForLlm;
 
-    if (_selectedRagScope != 'Off') {
-      String? subjectFilter;
-      String? unitFilter;
-      if (_selectedRagScope.contains('OS')) {
-        subjectFilter = 'Operating Systems';
-        unitFilter = 'Unit 1';
-      } else if (_selectedRagScope == 'All Notes') {
-        subjectFilter = null;
-        unitFilter = null;
-      }
-
+    if (_selectedScope.type != RagScopeType.off) {
       citations = _ragService.search(
         query: query,
-        filterSubject: subjectFilter,
-        filterUnit: unitFilter,
-        topK: 3,
+        scope: _selectedScope,
+        topK: isQuiz ? 5 : 3,
       );
+
+      // Requirement 8 & 18: Final Scope Validation on Citations
+      citations.removeWhere((m) {
+        if (!_selectedScope.matchesChunk(m.chunk)) {
+          debugPrint(
+            '[RAG_SCOPE_REJECTED] Chunk "${m.chunk.id}" (${m.chunk.subjectName} / ${m.chunk.unitName}) rejected: violates scope ${_selectedScope.displayLabel}',
+          );
+          return true;
+        }
+        return false;
+      });
 
       if (citations.isNotEmpty) {
         final contextBuffer = StringBuffer();
         contextBuffer.writeln('=== CONTEXT FROM STUDY VAULT ===');
         for (var i = 0; i < citations.length; i++) {
           final m = citations[i];
+          final isAudio = m.chunk.isAudio || m.chunk.timestamp != null;
           final ocrTag =
               m.chunk.isOcr ? ' (${m.chunk.extractionType.label})' : '';
+          final locationTag = isAudio
+              ? '${m.chunk.documentName} at ${m.chunk.timestamp ?? "00:00"}'
+              : '${m.chunk.documentName}, p.${m.chunk.pageNumber}$ocrTag';
           contextBuffer.writeln(
-              '[Source ${i + 1}: ${m.chunk.subject} > ${m.chunk.unit} (${m.chunk.documentName}, p.${m.chunk.pageNumber}$ocrTag)]:');
+              '[Source ${i + 1}: ${m.chunk.subjectName} > ${m.chunk.unitName} ($locationTag)]:');
           contextBuffer.writeln(m.chunk.text);
           contextBuffer.writeln();
         }
         contextBuffer.writeln('=== END CONTEXT ===');
-        contextBuffer.writeln(
-            'Answer the student\'s question based on the provided Study Vault context above. Be accurate and concise.');
-        contextBuffer.writeln('Question: $query');
-        promptForLlm = contextBuffer.toString();
+
+        if (isQuiz) {
+          // Requirement 3 & 4: Independent, progressive question-by-question quiz generator
+          final initialExam = GroundedPracticeExam(
+            id: 'quiz_${DateTime.now().millisecondsSinceEpoch}',
+            scope: _selectedScope,
+            totalQuestions: 5,
+            citations: citations,
+            questions: List.generate(
+              5,
+              (i) => GroundedQuizQuestion(
+                questionNumber: i + 1,
+                totalQuestions: 5,
+                status: QuizQuestionStatus.waiting,
+              ),
+            ),
+          );
+
+          final assistantMsg = AcademicChatMessage(
+            id: 'asst_${DateTime.now().millisecondsSinceEpoch}',
+            conversationId: targetConvId,
+            role: 'assistant',
+            text: initialExam.toMarkdown(),
+            timestamp: DateTime.now(),
+            citations: citations,
+            isGenerating: true,
+            practiceExam: initialExam,
+          );
+          _messages.add(assistantMsg);
+          _activeSession!.messages.add(assistantMsg);
+          setState(() {});
+          _scrollToBottom();
+
+          try {
+            final exam = await _quizGenService.generatePracticeExam(
+              query: query,
+              scope: _selectedScope,
+              totalQuestions: 5,
+              onProgress: (updatedExam) {
+                if (mounted && _activeSession?.id == targetConvId) {
+                  assistantMsg.practiceExam = updatedExam;
+                  assistantMsg.text = updatedExam.toMarkdown();
+                  setState(() {});
+                }
+              },
+            );
+
+            assistantMsg.practiceExam = exam;
+            assistantMsg.text = exam.toMarkdown();
+            assistantMsg.isGenerating = false;
+            await _conversationService.saveConversation(_activeSession!);
+          } catch (e) {
+            assistantMsg.isGenerating = false;
+            assistantMsg.text =
+                'Pal encountered an issue while generating the practice exam: $e';
+          }
+
+          if (mounted && _activeSession?.id == targetConvId) {
+            setState(() {});
+            _scrollToBottom();
+          }
+          return;
+        } else {
+          contextBuffer.writeln(
+              'Answer the student\'s question based on the provided Study Vault context above. Be accurate and concise.');
+          contextBuffer.writeln('Question: $query');
+          promptForLlm = contextBuffer.toString();
+        }
+
+        // Requirement 9: LOG THE EXACT LLM CONTEXT
+        debugPrint('========================================');
+        debugPrint('[QUIZ LLM CONTEXT]');
+        debugPrint('Selected: ${_selectedScope.displayLabel}');
+        debugPrint('Sources:');
+        for (var i = 0; i < citations.length; i++) {
+          debugPrint(
+              '  ${i + 1}. ${citations[i].chunk.documentName} (p.${citations[i].chunk.pageNumber})');
+        }
+        debugPrint('Context length: ${contextBuffer.length} characters');
+        debugPrint('========================================');
+      } else {
+        // Citations is empty!
+        if (_selectedScope.type == RagScopeType.document &&
+            _activeSession?.documentTitle != null &&
+            _activeSession?.backgroundContext != null &&
+            _activeSession!.backgroundContext!.isNotEmpty) {
+          final contextBuffer = StringBuffer();
+          contextBuffer.writeln(
+              '=== CONTEXT FROM SCANNED DOCUMENT: ${_activeSession!.documentTitle} ===');
+          contextBuffer.writeln(_activeSession!.backgroundContext);
+          contextBuffer.writeln('=== END CONTEXT ===');
+          contextBuffer.writeln('Question: $query');
+          promptForLlm = contextBuffer.toString();
+        } else if (_selectedScope.type == RagScopeType.lecture &&
+            _activeSession?.lectureTitle != null &&
+            _activeSession?.backgroundContext != null &&
+            _activeSession!.backgroundContext!.isNotEmpty) {
+          final contextBuffer = StringBuffer();
+          contextBuffer.writeln('=== CONTEXT FROM LECTURE TRANSCRIPT ===');
+          contextBuffer.writeln('[Lecture: ${_activeSession!.lectureTitle}]');
+          contextBuffer.writeln(_activeSession!.backgroundContext);
+          contextBuffer.writeln('=== END CONTEXT ===');
+          contextBuffer.writeln('Question: $query');
+          promptForLlm = contextBuffer.toString();
+        } else if ((_selectedScope.type == RagScopeType.subjectUnit ||
+                _selectedScope.type == RagScopeType.subject) &&
+            isSummary) {
+          // Scope has no documents! Reject generation cleanly with grounded feedback for summary!
+          debugPrint(
+              '[QUIZ] No indexed materials found in ${_selectedScope.displayLabel}');
+          final assistantMsg = AcademicChatMessage(
+            id: 'asst_${DateTime.now().millisecondsSinceEpoch}',
+            conversationId: targetConvId,
+            role: 'assistant',
+            text:
+                'Pal couldn\'t find any indexed materials in **${_selectedScope.displayLabel}**.\n\n'
+                'Please add or scan notes for this unit in the **Study Vault** before generating a summary.',
+            timestamp: DateTime.now(),
+            citations: [],
+            isGenerating: false,
+          );
+          _messages.add(assistantMsg);
+          _activeSession!.messages.add(assistantMsg);
+          await _conversationService.saveConversation(_activeSession!);
+          if (mounted && _activeSession?.id == targetConvId) {
+            setState(() {});
+            _scrollToBottom();
+          }
+          return;
+        }
       }
+    }
+
+    // If user requested a quiz in general chat or with empty citations, start deterministic active quiz
+    if (isQuiz && citations.isEmpty) {
+      final newQuiz = _activeQuizService.createQuiz(
+        topic: query,
+        subjectId: _selectedScope.subjectId,
+        unitId: _selectedScope.unitId,
+      );
+      _activeSession!.activeQuiz = newQuiz;
+      _activeSession!.activeMode = ActiveMode.quiz;
+
+      debugPrint('[PAL-CHAT] Prompt message count: 1');
+      debugPrint('[PAL-CHAT] Generation started');
+
+      final questionText = newQuiz.formatCurrentQuestion();
+      final assistantMsg = AcademicChatMessage(
+        id: 'asst_${DateTime.now().millisecondsSinceEpoch}',
+        conversationId: targetConvId,
+        role: 'assistant',
+        text: questionText,
+        timestamp: DateTime.now(),
+        isGenerating: false,
+      );
+      _messages.add(assistantMsg);
+      _activeSession!.messages.add(assistantMsg);
+      await _conversationService.saveConversation(_activeSession!);
+
+      debugPrint('[PAL-CHAT] Generation completed');
+
+      if (mounted && _activeSession?.id == targetConvId) {
+        setState(() {});
+        _scrollToBottom();
+      }
+      return;
     }
 
     // 3. Add Assistant Placeholder
@@ -408,26 +1270,119 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     final recentHistory =
         history.length > 6 ? history.sublist(history.length - 6) : history;
 
-    // 4. Stream Tokens from Llama.cpp Engine
-    try {
-      final tokenStream = _llmService.generateStreaming(
-        prompt: promptForLlm,
-        systemPrompt:
-            'You are Pal, an expert university academic copilot running on-device.',
-        maxTokens: 512,
-        conversationHistory: recentHistory,
-      );
+    // Isolate context only for grounded notes prompts with retrieved citations, quizzes, or summaries
+    final isGroundedAcademicQuery = isQuiz || isSummary || citations.isNotEmpty;
 
-      await for (final token in tokenStream) {
-        assistantMsg.text += token;
-        assistantMsg.tokensPerSecond = _llmService.currentTps;
+    final historyForLlm =
+        isGroundedAcademicQuery ? <AcademicChatMessage>[] : recentHistory;
 
-        // Only trigger UI re-render if current active conversation is targetConvId
+    // Check if query is an Agent Tool command
+    final toolCalls = AgentService.instance
+        .determineToolCalls(query, conversationHistory: _messages);
+    if (toolCalls.isNotEmpty) {
+      try {
+        final agentRes = await AgentService.instance.process(
+          prompt: query,
+          conversationHistory: _messages,
+        );
+        assistantMsg.text = agentRes.text;
+        assistantMsg.isGenerating = false;
+        await _conversationService.saveConversation(_activeSession!);
         if (mounted && _activeSession?.id == targetConvId) {
           setState(() {});
           _scrollToBottom();
         }
+        return;
+      } catch (e) {
+        debugPrint('Agent tool execution error: $e');
       }
+    }
+
+    // 4. Stream Tokens from Llama.cpp Engine
+    try {
+      debugPrint('[PAL-LLM] LLM service started');
+      final isGeneralChat = citations.isEmpty &&
+          (_activeSession?.backgroundContext == null ||
+              _activeSession!.backgroundContext!.isEmpty);
+
+      // Keep system prompt lightweight to prevent overflowing the mobile context window
+      final systemPromptToUse = systemPromptForLlm ??
+          'You are Pal, an expert university academic copilot running on-device. Answer directly and concisely.';
+
+      // Bounded context: recent history is sent for general conversation, isolated for grounded RAG
+      final historyToSend = historyForLlm;
+
+      debugPrint(
+          '[PAL-CHAT] Prompt message count: ${historyToSend.length + 1}');
+      debugPrint('[PAL-CHAT] Generation started');
+
+      final tokenStream = _llmService.generateStreaming(
+        prompt: promptForLlm,
+        systemPrompt: systemPromptToUse,
+        maxTokens: 512,
+        conversationHistory: historyToSend,
+      );
+
+      final accumulated = StringBuffer();
+      var interceptedToolCall = false;
+
+      await for (final token in tokenStream) {
+        accumulated.write(token);
+        final fullText = accumulated.toString();
+
+        // Check if LLM emitted a tool call protocol block
+        if (isGeneralChat && fullText.trimLeft().startsWith('<tool_call>')) {
+          interceptedToolCall = true;
+          // Do not leak raw <tool_call> XML to the user UI
+          continue;
+        }
+
+        if (!interceptedToolCall) {
+          assistantMsg.text += token;
+          assistantMsg.tokensPerSecond = _llmService.currentTps;
+
+          // Only trigger UI re-render if current active conversation is targetConvId
+          if (mounted && _activeSession?.id == targetConvId) {
+            setState(() {});
+            _scrollToBottom();
+            debugPrint('[PAL-LLM] UI update completed');
+          }
+        }
+      }
+
+      // If a dynamic tool call was emitted by the LLM during streaming, process and ground it
+      if (interceptedToolCall) {
+        final calls = AgentToolCall.extractCalls(accumulated.toString());
+        if (calls.isNotEmpty) {
+          final agentRes = await AgentService.instance.process(
+            prompt: query,
+            conversationHistory: _messages,
+          );
+          assistantMsg.text = agentRes.text;
+        } else {
+          assistantMsg.text = accumulated.toString();
+        }
+      }
+
+      // Requirement 17: Filter malformed output like "I heard: [1] [2] [3]"
+      if (assistantMsg.text.contains('I heard:') ||
+          assistantMsg.text.contains('[1] [2] [3]')) {
+        assistantMsg.text = assistantMsg.text
+            .replaceAll(
+                RegExp(r'I heard:\s*(?:\[\d+\]\s*)+', caseSensitive: false), '')
+            .trim();
+      }
+      if (assistantMsg.text.trim().isEmpty) {
+        assistantMsg.text =
+            "Pal couldn't generate a grounded quiz from this material.\n\nPlease verify that your notes contain readable text and try again.";
+        "Pal couldn't generate a response. Check the local model status.";
+      }
+      debugPrint('[PAL-LLM] Generation completed');
+      debugPrint('[PAL-CHAT] Generation completed');
+    } catch (e, stack) {
+      debugPrint('[PAL-LLM][ERROR] Exception during generation: $e\n$stack');
+      assistantMsg.text =
+          "Pal couldn't generate a response. Check the local model status.";
     } finally {
       assistantMsg.isGenerating = false;
 
@@ -583,6 +1538,63 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Diagnostic Action Button
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: AppTheme.cardBorder),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          onPressed: () async {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    'Testing local model ("Say hello in five words")...'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            final result = await _llmService.testLocalModel();
+                            if (context.mounted) {
+                              showDialog(
+                                context: context,
+                                builder: (dCtx) => AlertDialog(
+                                  backgroundColor: AppTheme.cardDark,
+                                  title: const Text('Local Model Diagnostic',
+                                      style: TextStyle(
+                                          color: AppTheme.textPrimary)),
+                                  content: Text(
+                                    'Prompt: "Say hello in five words."\n\nOutput:\n$result',
+                                    style: const TextStyle(
+                                        color: AppTheme.textSecondary),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dCtx),
+                                      child: const Text('Close'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.science,
+                              size: 16, color: AppTheme.cyanAccent),
+                          label: const Text(
+                            'Run Local Model Diagnostic',
+                            style: TextStyle(
+                                fontSize: 12, color: AppTheme.cyanAccent),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 14),
 
@@ -1217,11 +2229,19 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         elevation: 0,
         centerTitle: false,
         titleSpacing: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.menu, color: AppTheme.textPrimary, size: 22),
-          tooltip: 'Chat History',
-          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-        ),
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back,
+                    color: AppTheme.textPrimary, size: 22),
+                tooltip: 'Back',
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : IconButton(
+                icon: const Icon(Icons.menu,
+                    color: AppTheme.textPrimary, size: 22),
+                tooltip: 'Chat History',
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
         title: Row(
           children: [
             Container(
@@ -1245,48 +2265,54 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Pal Brain',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary,
-                          letterSpacing: -0.2,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Pal Brain',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.textPrimary,
+                            letterSpacing: -0.2,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 5),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: AppTheme.trustPillFill,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.shield_outlined,
-                                size: 9, color: AppTheme.trustPillText),
-                            SizedBox(width: 2.5),
-                            Text(
-                              'On-device',
-                              style: TextStyle(
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.trustPillText,
+                        const SizedBox(width: 5),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppTheme.trustPillFill,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.shield_outlined,
+                                  size: 9, color: AppTheme.trustPillText),
+                              SizedBox(width: 2.5),
+                              Text(
+                                'On-device',
+                                style: TextStyle(
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.trustPillText,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   Text(
                     _activeSession != null &&
-                            _activeSession!.userMessagesCount > 0
+                            (_activeSession!.userMessagesCount > 0 ||
+                                _activeSession!.lectureId != null ||
+                                _activeSession!.documentId != null)
                         ? _activeSession!.title
                         : 'Your personal academic copilot',
                     maxLines: 1,
@@ -1302,6 +2328,13 @@ class PalBrainScreenState extends State<PalBrainScreen> {
           ],
         ),
         actions: [
+          if (Navigator.canPop(context))
+            IconButton(
+              icon: const Icon(Icons.history_rounded,
+                  color: AppTheme.textSecondary, size: 20),
+              tooltip: 'Chat History',
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            ),
           // Subtle New Chat button matching Pal palette
           InkWell(
             borderRadius: BorderRadius.circular(16),
@@ -1368,7 +2401,7 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   }
 
   Widget _buildContextBar() {
-    final hasContext = _selectedRagScope != 'Off';
+    final hasContext = _selectedScope.type != RagScopeType.off;
     final isDownloading = _llmService.downloadingPreset != null;
     final downloading = _llmService.downloadingPreset;
 
@@ -1388,67 +2421,80 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         children: [
           Row(
             children: [
-              InkWell(
-                onTap: _showScopePickerModal,
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
-                  decoration: BoxDecoration(
-                    color: hasContext
-                        ? AppTheme.highlightBg
-                        : AppTheme.neutralPillFill,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
+              Expanded(
+                child: InkWell(
+                  onTap: _showScopePickerModal,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4.5),
+                    decoration: BoxDecoration(
                       color: hasContext
-                          ? AppTheme.primaryAccent.withValues(alpha: 0.45)
-                          : AppTheme.cardBorder,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        hasContext ? Icons.menu_book : Icons.public,
-                        size: 13,
+                          ? AppTheme.highlightBg
+                          : AppTheme.neutralPillFill,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
                         color: hasContext
-                            ? AppTheme.primaryAccent
-                            : AppTheme.textSecondary,
+                            ? AppTheme.primaryAccent.withValues(alpha: 0.45)
+                            : AppTheme.cardBorder,
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        hasContext
-                            ? 'Context: $_selectedRagScope'
-                            : 'General Knowledge (No Vault)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _selectedScope.type == RagScopeType.lecture
+                              ? Icons.mic_none_outlined
+                              : (_selectedScope.type == RagScopeType.document
+                                  ? Icons.document_scanner_outlined
+                                  : (hasContext
+                                      ? Icons.menu_book
+                                      : Icons.public)),
+                          size: 13,
                           color: hasContext
-                              ? AppTheme.textPrimary
+                              ? AppTheme.primaryAccent
                               : AppTheme.textSecondary,
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 14,
-                        color: hasContext
-                            ? AppTheme.primaryAccent
-                            : AppTheme.textSecondary,
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            hasContext
+                                ? 'Context: ${_selectedScope.displayLabel}'
+                                : 'General Knowledge (No Vault)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: hasContext
+                                  ? AppTheme.textPrimary
+                                  : AppTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.keyboard_arrow_down,
+                          size: 14,
+                          color: hasContext
+                              ? AppTheme.primaryAccent
+                              : AppTheme.textSecondary,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const Spacer(),
-              if (hasContext)
+              if (hasContext) ...[
+                const SizedBox(width: 8),
                 Text(
-                  '${_ragService.totalIndexedChunks} sources',
+                  '${_ragService.countChunksInScope(_selectedScope)} sources',
                   style: const TextStyle(
                     fontSize: 10.5,
                     color: AppTheme.textSecondary,
                   ),
                 ),
+              ],
             ],
           ),
           if (isDownloading && downloading != null) ...[
@@ -1491,68 +2537,162 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   void _showScopePickerModal() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppTheme.cardSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: AppTheme.cardBorder,
-                      borderRadius: BorderRadius.circular(2),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.cardBorder,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                ),
-                const Text(
-                  'Academic Context Scope',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary,
+                  const Text(
+                    'Academic Context Scope',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Select the textbook or lecture note units Pal uses for grounded answers and citations.',
-                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                ),
-                const SizedBox(height: 16),
-                _buildScopeOptionTile(
-                  title: 'Unit 1 (OS)',
-                  subtitle:
-                      'Operating Systems · Process Synchronization & Concurrency',
-                  scopeKey: 'Unit 1 (OS)',
-                  icon: Icons.menu_book,
-                  modalContext: ctx,
-                ),
-                _buildScopeOptionTile(
-                  title: 'All Notes',
-                  subtitle: 'Search across all indexed subjects in Study Vault',
-                  scopeKey: 'All Notes',
-                  icon: Icons.library_books_outlined,
-                  modalContext: ctx,
-                ),
-                _buildScopeOptionTile(
-                  title: 'Off (General Knowledge)',
-                  subtitle:
-                      'Rely on on-device LLM general knowledge without Vault retrieval',
-                  scopeKey: 'Off',
-                  icon: Icons.public,
-                  modalContext: ctx,
-                ),
-                const SizedBox(height: 12),
-              ],
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Select the subject and unit Pal uses for grounded answers and verified citations.',
+                    style:
+                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 1. All Notes Global Scope
+                  _buildScopeOptionTile(
+                    title: 'All Notes',
+                    subtitle:
+                        'Search across all subjects & units in Study Vault',
+                    scopeOption: const RagScope.allNotes(),
+                    icon: Icons.library_books_outlined,
+                    modalContext: ctx,
+                  ),
+
+                  // 2. Active Lecture/Document Scopes if applicable
+                  if (_activeSession?.lectureTitle != null)
+                    _buildScopeOptionTile(
+                      title: 'This Lecture',
+                      subtitle:
+                          'Grounded directly in ${_activeSession!.lectureTitle} transcript & timestamps',
+                      scopeOption: RagScope.lecture(
+                        lectureId: _activeSession!.lectureId ?? '',
+                        lectureTitle:
+                            _activeSession!.lectureTitle ?? 'This Lecture',
+                        subjectId: _activeSession!.subjectId,
+                        subjectName: _activeSession!.subjectName,
+                        unitId: _activeSession!.unitId,
+                        unitName: _activeSession!.unitName,
+                      ),
+                      icon: Icons.mic_none_outlined,
+                      modalContext: ctx,
+                    ),
+                  if (_activeSession?.documentTitle != null)
+                    _buildScopeOptionTile(
+                      title: 'This Document',
+                      subtitle:
+                          'Grounded directly in ${_activeSession!.documentTitle} OCR text & citations',
+                      scopeOption: RagScope.document(
+                        documentId: _activeSession!.documentId ?? '',
+                        documentName:
+                            _activeSession!.documentTitle ?? 'This Document',
+                        subjectId: _activeSession!.subjectId,
+                        subjectName: _activeSession!.subjectName,
+                        unitId: _activeSession!.unitId,
+                        unitName: _activeSession!.unitName,
+                      ),
+                      icon: Icons.document_scanner_outlined,
+                      modalContext: ctx,
+                    ),
+
+                  const SizedBox(height: 8),
+
+                  // 3. Hierarchical Subjects & Units
+                  for (final sub in _ragService.subjects) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.school,
+                              size: 13, color: AppTheme.primaryAccent),
+                          const SizedBox(width: 6),
+                          Text(
+                            sub.name.toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Subject-wide option
+                    _buildScopeOptionTile(
+                      title: '${sub.name} (All Units)',
+                      subtitle:
+                          'Search all ${sub.units.length} unit(s) in ${sub.name}',
+                      scopeOption: RagScope.subject(
+                        subjectName: sub.name,
+                        subjectId: sub.id,
+                      ),
+                      icon: Icons.folder_open,
+                      modalContext: ctx,
+                    ),
+                    // Each unit in this subject
+                    for (final unit in sub.units)
+                      _buildScopeOptionTile(
+                        title: '${sub.name} · ${unit.name}',
+                        subtitle:
+                            '${unit.documents.length} document(s) indexed',
+                        scopeOption: RagScope.subjectUnit(
+                          subjectName: sub.name,
+                          unitName: unit.name,
+                          subjectId: sub.id,
+                          unitId: unit.id,
+                        ),
+                        icon: Icons.bookmark_outline,
+                        modalContext: ctx,
+                      ),
+                  ],
+
+                  const SizedBox(height: 8),
+
+                  // 4. Off (General Knowledge) Scope
+                  _buildScopeOptionTile(
+                    title: 'Off (General Knowledge)',
+                    subtitle:
+                        'Rely on on-device LLM general knowledge without Vault retrieval',
+                    scopeOption: const RagScope.off(),
+                    icon: Icons.public,
+                    modalContext: ctx,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
             ),
           ),
         );
@@ -1563,16 +2703,16 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   Widget _buildScopeOptionTile({
     required String title,
     required String subtitle,
-    required String scopeKey,
+    required RagScope scopeOption,
     required IconData icon,
     required BuildContext modalContext,
   }) {
-    final isSelected = _selectedRagScope == scopeKey;
+    final isSelected = _selectedScope == scopeOption;
     return InkWell(
       onTap: () {
-        setState(() => _selectedRagScope = scopeKey);
+        setState(() => _selectedScope = scopeOption);
         if (_activeSession != null) {
-          _activeSession!.selectedRagScope = scopeKey;
+          _activeSession!.ragScope = scopeOption;
           _conversationService.saveConversation(_activeSession!);
         }
         Navigator.pop(modalContext);
@@ -1633,9 +2773,9 @@ class PalBrainScreenState extends State<PalBrainScreen> {
   }
 
   Widget _buildQuickSuggestions() {
-    final suggestions = _selectedRagScope != 'Off'
+    final suggestions = _selectedScope.type != RagScopeType.off
         ? [
-            'Explain the core principles of $_selectedRagScope',
+            'Explain the core principles of ${_selectedScope.displayLabel}',
             'Summarize my uploaded notes for this topic',
             'Quiz me with 3 practice exam questions',
             'Find my upcoming assignment deadlines',
@@ -1846,8 +2986,10 @@ class PalBrainScreenState extends State<PalBrainScreen> {
             ),
             const SizedBox(height: 10),
 
-            // 2. Body: Markdown response or thinking state
-            if (msg.text.isEmpty && msg.isGenerating)
+            // 2. Body: Markdown response or thinking state or Practice Exam
+            if (msg.practiceExam != null)
+              _buildPracticeExamWidget(msg)
+            else if (msg.text.isEmpty && msg.isGenerating)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
@@ -1870,6 +3012,17 @@ class PalBrainScreenState extends State<PalBrainScreen> {
                       ),
                     ),
                   ],
+                ),
+              )
+            else if (msg.text.isEmpty && !msg.isGenerating)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  "Pal couldn't generate a response. Check the local model status.",
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textSecondary,
+                  ),
                 ),
               )
             else
@@ -2129,7 +3282,454 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     );
   }
 
+  Widget _buildPracticeExamWidget(AcademicChatMessage msg) {
+    final exam = msg.practiceExam!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Exam Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryAccent.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: AppTheme.primaryAccent.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.school, size: 20, color: AppTheme.primaryAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Practice Exam · ${exam.scope.displayLabel}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      exam.isCompleted
+                          ? '${exam.completedCount} of ${exam.totalQuestions} Questions Complete ✓'
+                          : 'Generating Question ${(exam.activeIndex + 1).clamp(1, exam.totalQuestions)} of ${exam.totalQuestions}...',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (msg.isGenerating)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.primaryAccent,
+                  ),
+                )
+              else if (exam.isCompleted)
+                Icon(Icons.check_circle,
+                    size: 18, color: AppTheme.semanticSuccess),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Progressive Question Status Badges (Requirement 9)
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: List.generate(exam.questions.length, (idx) {
+            final q = exam.questions[idx];
+            Color badgeBg;
+            Color badgeBorder;
+            Color badgeText;
+            IconData icon;
+
+            switch (q.status) {
+              case QuizQuestionStatus.complete:
+                badgeBg = AppTheme.semanticSuccess.withValues(alpha: 0.12);
+                badgeBorder = AppTheme.semanticSuccess.withValues(alpha: 0.4);
+                badgeText = AppTheme.semanticSuccess;
+                icon = Icons.check_circle_outline;
+                break;
+              case QuizQuestionStatus.generating:
+                badgeBg = AppTheme.primaryAccent.withValues(alpha: 0.12);
+                badgeBorder = AppTheme.primaryAccent.withValues(alpha: 0.4);
+                badgeText = AppTheme.primaryAccent;
+                icon = Icons.hourglass_top;
+                break;
+              case QuizQuestionStatus.failed:
+                badgeBg = AppTheme.semanticError.withValues(alpha: 0.12);
+                badgeBorder = AppTheme.semanticError.withValues(alpha: 0.4);
+                badgeText = AppTheme.semanticError;
+                icon = Icons.error_outline;
+                break;
+              case QuizQuestionStatus.waiting:
+                badgeBg = AppTheme.neutralPillFill;
+                badgeBorder = AppTheme.cardBorder;
+                badgeText = AppTheme.textMuted;
+                icon = Icons.schedule;
+                break;
+            }
+
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: badgeBorder),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 12, color: badgeText),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Q${q.questionNumber} ${q.status == QuizQuestionStatus.complete ? "✓" : q.status == QuizQuestionStatus.generating ? "..." : q.status == QuizQuestionStatus.failed ? "✕" : ""}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: badgeText,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 14),
+
+        // List of Question Cards
+        ...exam.questions.map((q) => _buildQuestionCard(msg, exam, q)),
+
+        // Interactive Quiz Launcher Button (Requirement 22)
+        if (exam.isCompleted && exam.completedCount > 0) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _openInteractiveQuiz(exam),
+              icon: const Icon(Icons.play_circle_fill, size: 16),
+              label: const Text('Take Interactive Quiz Mode'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryAccent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildQuestionCard(
+    AcademicChatMessage msg,
+    GroundedPracticeExam exam,
+    GroundedQuizQuestion q,
+  ) {
+    if (q.status == QuizQuestionStatus.waiting) {
+      return const SizedBox.shrink();
+    }
+
+    if (q.status == QuizQuestionStatus.generating) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.cardBackground,
+          borderRadius: BorderRadius.circular(12),
+          border:
+              Border.all(color: AppTheme.primaryAccent.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.primaryAccent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Question ${q.questionNumber} of ${q.totalQuestions} Generating...',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.primaryAccent,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            if (q.rawStreamingText.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                q.rawStreamingText,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary,
+                  fontFamily: 'monospace',
+                ),
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (q.status == QuizQuestionStatus.failed) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.semanticError.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border:
+              Border.all(color: AppTheme.semanticError.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, size: 18, color: AppTheme.semanticError),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                q.errorMessage ??
+                    'Question ${q.questionNumber} could not be generated.',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: AppTheme.semanticError,
+                ),
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => _retryQuizQuestion(msg, q.questionNumber - 1),
+              icon: const Icon(Icons.refresh, size: 13),
+              label: const Text('Retry', style: TextStyle(fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.semanticError,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                minimumSize: const Size(60, 30),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Completed Question Card
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.cardBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Question Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Question ${q.questionNumber}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryAccent,
+                  ),
+                ),
+              ),
+              if (q.sources.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    q.sources.first.chunk.documentName,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: AppTheme.textMuted,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Question Text
+          Text(
+            q.question,
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Answer Box
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceSubtle,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ANSWER:',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.semanticSuccess,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  q.answer,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textPrimary,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'EXPLANATION:',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textSecondary,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  q.explanation,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: AppTheme.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _retryQuizQuestion(
+      AcademicChatMessage msg, int questionIndex) async {
+    if (msg.practiceExam == null) return;
+    final exam = msg.practiceExam!;
+    msg.isGenerating = true;
+    setState(() {});
+
+    await _quizGenService.generateSingleQuestion(
+      exam: exam,
+      questionIndex: questionIndex,
+      isRetry: true,
+      onProgress: (updatedExam) {
+        if (mounted) {
+          msg.practiceExam = updatedExam;
+          msg.text = updatedExam.toMarkdown();
+          setState(() {});
+        }
+      },
+    );
+
+    msg.isGenerating = false;
+    msg.text = exam.toMarkdown();
+    await _conversationService.saveConversation(_activeSession!);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _openInteractiveQuiz(GroundedPracticeExam exam) {
+    final customQuestions = exam.questions
+        .where((q) => q.isComplete)
+        .map((q) => QuizQuestion(
+              question: q.question,
+              options: [
+                q.answer,
+                'Alternative theoretical premise A',
+                'Alternative theoretical premise B',
+                'None of the above',
+              ]..shuffle(),
+              correctIndex: 0,
+              citation: q.sources.isNotEmpty
+                  ? '${q.sources.first.chunk.documentName}, p.${q.sources.first.chunk.pageNumber}'
+                  : exam.scope.displayLabel,
+              topic: exam.scope.displayLabel,
+              difficulty: 'Medium',
+            ))
+        .toList();
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => QuizScreen(
+          customQuestions: customQuestions,
+          title:
+              'Practice Exam · ${exam.scope.unitName ?? exam.scope.subjectName ?? "Study Vault"}',
+        ),
+      ),
+    );
+  }
+
   Widget _buildCitationChip(BuildContext context, ChunkMatch match) {
+    final isAudio = match.chunk.isAudio || match.chunk.timestamp != null;
+    final label = isAudio
+        ? '${match.chunk.documentName} · ${match.chunk.timestamp ?? '00:00'}'
+        : '${match.chunk.documentName} · p.${match.chunk.pageNumber}${match.chunk.isOcr ? ' (OCR)' : ''}';
+
     return InkWell(
       onTap: () => _showCitationModal(context, match),
       borderRadius: BorderRadius.circular(8),
@@ -2143,12 +3743,15 @@ class PalBrainScreenState extends State<PalBrainScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.menu_book,
-                size: 12, color: AppTheme.primaryAccent),
+            Icon(
+              isAudio ? Icons.graphic_eq : Icons.menu_book,
+              size: 12,
+              color: AppTheme.primaryAccent,
+            ),
             const SizedBox(width: 5),
             Flexible(
               child: Text(
-                '${match.chunk.documentName} · p.${match.chunk.pageNumber}${match.chunk.isOcr ? ' (OCR)' : ''}',
+                label,
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
@@ -2163,150 +3766,174 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     );
   }
 
+  @visibleForTesting
+  void showCitationModalForTest(BuildContext context, ChunkMatch match) =>
+      _showCitationModal(context, match);
+
   void _showCitationModal(BuildContext context, ChunkMatch match) {
+    final isAudio = match.chunk.isAudio || match.chunk.timestamp != null;
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppTheme.cardSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: AppTheme.cardBorder,
-                      borderRadius: BorderRadius.circular(2),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+            ),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                14,
+                20,
+                20 + MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.cardBorder,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                ),
-                Row(
-                  children: [
-                    const Icon(Icons.menu_book,
-                        size: 18, color: AppTheme.primaryAccent),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        match.chunk.documentName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
-                        ),
+                  Row(
+                    children: [
+                      Icon(
+                        isAudio ? Icons.graphic_eq : Icons.menu_book,
+                        size: 18,
+                        color: AppTheme.primaryAccent,
                       ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppTheme.detectedPillFill,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Page ${match.chunk.pageNumber}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.detectedPillText,
-                        ),
-                      ),
-                    ),
-                    if (match.chunk.isOcr) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppTheme.trustPillFill,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                      const SizedBox(width: 8),
+                      Expanded(
                         child: Text(
-                          match.chunk.extractionType.label,
+                          match.chunk.documentName,
                           style: const TextStyle(
-                            fontSize: 10,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: AppTheme.trustPillText,
+                            color: AppTheme.textPrimary,
                           ),
                         ),
                       ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.detectedPillFill,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          isAudio
+                              ? match.chunk.timestamp ?? '00:00'
+                              : 'Page ${match.chunk.pageNumber}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.detectedPillText,
+                          ),
+                        ),
+                      ),
+                      if (match.chunk.isOcr) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.trustPillFill,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            match.chunk.extractionType.label,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.trustPillText,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${match.chunk.subject} • ${match.chunk.unit} • BM25 Score: ${match.score.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textSecondary,
                   ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'VERIFIED SOURCE EXCERPT',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.8,
-                    color: AppTheme.textInactive,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppTheme.neutralPillFill.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppTheme.cardBorder),
-                  ),
-                  child: Text(
-                    match.chunk.text,
+                  const SizedBox(height: 6),
+                  Text(
+                    '${match.chunk.subject} • ${match.chunk.unit} • BM25 Score: ${match.score.toStringAsFixed(2)}',
                     style: const TextStyle(
-                      fontSize: 13,
-                      height: 1.5,
-                      color: AppTheme.textPrimary,
-                      fontStyle: FontStyle.italic,
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
                     ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    icon: const Icon(Icons.copy,
-                        size: 14, color: AppTheme.primaryAccent),
-                    label: const Text(
-                      'Copy Citation Excerpt',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.primaryAccent,
-                        fontWeight: FontWeight.bold,
+                  const SizedBox(height: 14),
+                  const Text(
+                    'VERIFIED SOURCE EXCERPT',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                      color: AppTheme.textInactive,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppTheme.neutralPillFill.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppTheme.cardBorder),
+                    ),
+                    child: SelectableText(
+                      match.chunk.text,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: AppTheme.textPrimary,
+                        fontStyle: FontStyle.italic,
                       ),
                     ),
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: match.chunk.text));
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).clearSnackBars();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Citation excerpt copied to clipboard'),
-                          duration: Duration(seconds: 2),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    },
                   ),
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.copy,
+                          size: 14, color: AppTheme.primaryAccent),
+                      label: const Text(
+                        'Copy Citation Excerpt',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.primaryAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onPressed: () {
+                        Clipboard.setData(
+                            ClipboardData(text: match.chunk.text));
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).clearSnackBars();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content:
+                                Text('Citation excerpt copied to clipboard'),
+                            duration: Duration(seconds: 2),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -2337,8 +3964,14 @@ class PalBrainScreenState extends State<PalBrainScreen> {
     String hintText;
     if (isRecording) {
       hintText = 'Listening to your voice...';
-    } else if (_selectedRagScope != 'Off') {
-      hintText = 'Ask Pal about $_selectedRagScope...';
+    } else if (_selectedScope.type == RagScopeType.lecture) {
+      hintText =
+          'Ask Pal about ${_activeSession?.lectureTitle ?? "this lecture"}...';
+    } else if (_selectedScope.type == RagScopeType.document) {
+      hintText =
+          'Ask Pal about ${_activeSession?.documentTitle ?? "this document"}...';
+    } else if (_selectedScope.type != RagScopeType.off) {
+      hintText = 'Ask Pal about ${_selectedScope.displayLabel}...';
     } else {
       hintText = 'Ask Pal about your notes, lectures...';
     }

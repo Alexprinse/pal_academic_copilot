@@ -16,7 +16,8 @@ class LecturesHistoryScreen extends StatelessWidget {
         elevation: 0,
         scrolledUnderElevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: AppTheme.textPrimary),
+          icon: const Icon(Icons.arrow_back_ios_new,
+              size: 18, color: AppTheme.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
@@ -33,7 +34,8 @@ class LecturesHistoryScreen extends StatelessWidget {
         listenable: LectureRecordingService.instance,
         builder: (context, _) {
           final recordings = LectureRecordingService.instance.recordings;
-          final activeRecording = LectureRecordingService.instance.activeRecording;
+          final activeRecording =
+              LectureRecordingService.instance.activeRecording;
 
           if (recordings.isEmpty && activeRecording == null) {
             return Center(
@@ -103,7 +105,8 @@ class LecturesHistoryScreen extends StatelessWidget {
                 ),
               ),
 
-              ...recordings.map((recording) => _buildRecordingItem(context, recording)),
+              ...recordings
+                  .map((recording) => _buildRecordingItem(context, recording)),
             ],
           );
         },
@@ -111,13 +114,15 @@ class LecturesHistoryScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildActiveRecordingCard(BuildContext context, LectureRecording active) {
+  Widget _buildActiveRecordingCard(
+      BuildContext context, LectureRecording active) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppTheme.cardSurface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.overduePillText.withValues(alpha: 0.5), width: 1.5),
+        border: Border.all(
+            color: AppTheme.overduePillText.withValues(alpha: 0.5), width: 1.5),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Row(
@@ -128,7 +133,8 @@ class LecturesHistoryScreen extends StatelessWidget {
               color: AppTheme.overduePillText.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.fiber_manual_record, color: AppTheme.overduePillText, size: 20),
+            child: const Icon(Icons.fiber_manual_record,
+                color: AppTheme.overduePillText, size: 20),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -159,13 +165,15 @@ class LecturesHistoryScreen extends StatelessWidget {
                 ),
                 Text(
                   '${active.scheduledStart} - ${active.scheduledEnd}',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 11.5),
                 ),
               ],
             ),
           ),
           ElevatedButton(
-            onPressed: () => LectureRecordingService.instance.stopActiveRecording(),
+            onPressed: () =>
+                LectureRecordingService.instance.stopActiveRecording(),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.overduePillFill,
               foregroundColor: AppTheme.overduePillText,
@@ -176,7 +184,8 @@ class LecturesHistoryScreen extends StatelessWidget {
                 side: const BorderSide(color: AppTheme.overduePillText),
               ),
             ),
-            child: const Text('Stop', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+            child: const Text('Stop',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
           ),
         ],
       ),
@@ -225,36 +234,78 @@ class LecturesHistoryScreen extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            recording.subject,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.textPrimary,
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    recording.displayTitle,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.textPrimary,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: recording.isLiveCapture
+                                        ? AppTheme.detectedPillFill
+                                        : AppTheme.neutralPillFill,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    recording.isLiveCapture
+                                        ? 'LIVE'
+                                        : (recording.sourceType ==
+                                                'importedAudio'
+                                            ? 'IMPORTED'
+                                            : 'SCHEDULED'),
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                      color: recording.isLiveCapture
+                                          ? AppTheme.primaryAccent
+                                          : AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
+                          const SizedBox(width: 8),
                           statusBadge,
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${recording.scheduledStart} - ${recording.scheduledEnd} • ${recording.formattedDuration}',
-                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        recording.isLiveCapture
+                            ? '${recording.formattedDuration} · ${_formatItemDate(recording.date)}'
+                            : '${recording.scheduledStart} - ${recording.scheduledEnd} • ${recording.formattedDuration}',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppTheme.textSecondary),
                       ),
-                      if (recording.summary != null && recording.summary!.keyPoints.isNotEmpty) ...[
+                      if (recording.summary != null &&
+                          recording.summary!.keyPoints.isNotEmpty) ...[
                         const SizedBox(height: 6),
                         Text(
                           recording.summary!.keyPoints.first,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11.5, color: AppTheme.textSecondary),
+                          style: const TextStyle(
+                              fontSize: 11.5, color: AppTheme.textSecondary),
                         ),
                       ],
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Icon(Icons.chevron_right, color: AppTheme.textSecondary, size: 20),
+                const Icon(Icons.chevron_right,
+                    color: AppTheme.textSecondary, size: 20),
               ],
             ),
           ),
@@ -301,5 +352,23 @@ class LecturesHistoryScreen extends StatelessWidget {
         style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w700),
       ),
     );
+  }
+
+  static String _formatItemDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
   }
 }

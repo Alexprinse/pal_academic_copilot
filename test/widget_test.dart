@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pal_academic_copilot/main.dart';
 
 void main() {
-  testWidgets('Pal App bottom bar has Camera instead of Tasks, and View all opens Tasks', (WidgetTester tester) async {
+  testWidgets(
+      'Pal App bottom bar has Camera instead of Tasks, and View all opens Tasks',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const PalApp());
     expect(find.byType(PalApp), findsOneWidget);
 
@@ -31,7 +33,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     // Verify Study Vault screen is active
-    expect(find.text('Subject & Unit RAG Knowledge Base'), findsOneWidget);
+    expect(find.text('Personal Student Vault'), findsWidgets);
 
     // Tap Home tab on bottom bar
     await tester.tap(find.text('Home'));
@@ -42,13 +44,15 @@ void main() {
     final viewAllFinder = find.text('View all →');
     await tester.scrollUntilVisible(
       viewAllFinder,
-      200,
+      300,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -250));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(viewAllFinder, findsOneWidget);
     await tester.tap(viewAllFinder);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500)); await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
 
     // Verify Tasks screen opened
     expect(find.text('Academic Tasks'), findsOneWidget);
@@ -57,7 +61,8 @@ void main() {
     // Pop back to Dashboard
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500)); await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
 
     // Verify back on Dashboard
     expect(find.text('View all →'), findsOneWidget);

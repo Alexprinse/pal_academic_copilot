@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/timetable_entry.dart';
+import 'pal_notification_service.dart';
 
 class TimetableService extends ChangeNotifier {
   static final TimetableService instance = TimetableService._();
@@ -222,7 +223,7 @@ class TimetableService extends ChangeNotifier {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/timetable_entries.json');
       final jsonList = _entries.map((e) => e.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList));
+      file.writeAsStringSync(jsonEncode(jsonList));
     } catch (e) {
       debugPrint('Note: unable to write timetable_entries.json: $e');
     }
@@ -232,6 +233,7 @@ class TimetableService extends ChangeNotifier {
     _entries.add(entry);
     notifyListeners();
     await _saveToDisk();
+    PalNotificationService.instance.scheduleClassReminders(entry);
   }
 
   Future<void> addEntries(List<TimetableEntry> newEntries,
@@ -241,15 +243,24 @@ class TimetableService extends ChangeNotifier {
     if (saveToDisk) {
       await _saveToDisk();
     }
+    for (final e in newEntries) {
+      PalNotificationService.instance.scheduleClassReminders(e);
+    }
   }
 
   Future<void> replaceEntries(List<TimetableEntry> newEntries,
       {bool saveToDisk = true}) async {
+    for (final old in _entries) {
+      PalNotificationService.instance.cancelEntityNotifications(old.id);
+    }
     _entries.clear();
     _entries.addAll(newEntries);
     notifyListeners();
     if (saveToDisk) {
       await _saveToDisk();
+    }
+    for (final e in newEntries) {
+      PalNotificationService.instance.scheduleClassReminders(e);
     }
   }
 
@@ -275,6 +286,9 @@ class TimetableService extends ChangeNotifier {
       _entries[idx] = updated;
       notifyListeners();
       await _saveToDisk();
+      await PalNotificationService.instance
+          .cancelEntityNotifications(updated.id);
+      PalNotificationService.instance.scheduleClassReminders(updated);
     }
   }
 
@@ -282,6 +296,7 @@ class TimetableService extends ChangeNotifier {
     _entries.removeWhere((e) => e.id == id);
     notifyListeners();
     await _saveToDisk();
+    PalNotificationService.instance.cancelEntityNotifications(id);
   }
 
   Future<void> resetToDefaultSeed({bool saveToDisk = true}) async {
@@ -369,5 +384,12 @@ class TimetableService extends ChangeNotifier {
     if (clean.startsWith('sat')) return 'Sat';
     if (clean.startsWith('sun')) return 'Sun';
     return day;
+  }
+
+  @visibleForTesting
+  void setEntriesForTesting(List<TimetableEntry> items) {
+    _entries.clear();
+    _entries.addAll(items);
+    notifyListeners();
   }
 }

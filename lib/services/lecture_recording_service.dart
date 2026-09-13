@@ -4,9 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/lecture_recording.dart';
 import '../models/timetable_entry.dart';
-import 'deadline_service.dart';
-import 'llm_service.dart';
+import 'lecture_intelligence_service.dart';
 import 'pal_notification_service.dart';
+import 'rag_service.dart';
 import 'stt_service.dart';
 
 class LectureRecordingService extends ChangeNotifier {
@@ -133,10 +133,13 @@ class LectureRecordingService extends ChangeNotifier {
       fileSizeBytes: 0,
       transcriptionStatus: 'pending',
       summaryStatus: 'none',
+      sourceType: 'scheduledLecture',
     );
 
     PalNotificationService.instance.showRecordingNotification(
       subject: entry.subject,
+      recordingId: newId,
+      elapsedSeconds: 0,
     );
 
     debugPrint('[RECORD] Lecture Recording Started:');
@@ -145,6 +148,76 @@ class LectureRecordingService extends ChangeNotifier {
     debugPrint('[RECORD] Audio path: $actualPath');
 
     notifyListeners();
+  }
+
+  /// Start recording for a manual Live Capture session
+  Future<LectureRecording> startLiveCapture({String? customTitle}) async {
+    if (isRecordingNow) {
+      return _activeRecording!;
+    }
+
+    final now = DateTime.now();
+    final dateSlug =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    final newId = 'live_$dateSlug';
+
+    String targetAudioPath = '';
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final lecturesDir = Directory('${docsDir.path}/lectures');
+      if (!await lecturesDir.exists()) {
+        await lecturesDir.create(recursive: true);
+      }
+      targetAudioPath = '${lecturesDir.path}/$newId.wav';
+    } catch (e) {
+      debugPrint('Error setting up lectures directory: $e');
+    }
+
+    try {
+      await SttService.instance.startRecording(
+        customFilePath: targetAudioPath.isNotEmpty ? targetAudioPath : null,
+      );
+    } catch (e) {
+      debugPrint('SttService live start recording fallback: $e');
+    }
+
+    final actualPath = SttService.instance.recordingPath ?? targetAudioPath;
+
+    final defaultTitle =
+        'Live Capture · ${_formatMonthDay(now)}, ${_formatTime(now)}';
+    final initialSubject = customTitle ?? defaultTitle;
+
+    final recording = LectureRecording(
+      id: newId,
+      subject: initialSubject,
+      title: customTitle,
+      date: now,
+      scheduledStart: _formatTime(now),
+      scheduledEnd: _formatTime(now),
+      actualStart: now,
+      audioPath: actualPath,
+      durationSeconds: 0,
+      fileSizeBytes: 0,
+      transcriptionStatus: 'pending',
+      summaryStatus: 'none',
+      sourceType: 'liveCapture',
+    );
+
+    _activeRecording = recording;
+
+    PalNotificationService.instance.showRecordingNotification(
+      subject: initialSubject,
+      recordingId: newId,
+      elapsedSeconds: 0,
+    );
+
+    debugPrint('[RECORD] Live Capture Started:');
+    debugPrint('[RECORD] Subject: $initialSubject');
+    debugPrint('[RECORD] ID: $newId');
+    debugPrint('[RECORD] Audio path: $actualPath');
+
+    notifyListeners();
+    return recording;
   }
 
   /// Stop current active recording and begin transcription & summarization pipeline
@@ -171,16 +244,9 @@ class LectureRecordingService extends ChangeNotifier {
     }
 
     await PalNotificationService.instance.cancelRecordingNotification();
-    final durationText = durationSeconds >= 60
-        ? '${durationSeconds ~/ 60}m ${durationSeconds % 60}s'
-        : '${durationSeconds}s';
-    await PalNotificationService.instance.showRecordingFinishedNotification(
-      subject: ongoing.subject,
-      durationText: durationText,
-    );
 
     debugPrint('[RECORD] Lecture Recording Finished:');
-    debugPrint('[RECORD] Subject: ${ongoing.subject}');
+    debugPrint('[RECORD] Subject: ${ongoing.displayTitle}');
     debugPrint('[RECORD] Audio path: $audioPath');
     debugPrint('[RECORD] File size: $fileSizeBytes bytes');
     debugPrint('[RECORD] Duration: $durationSeconds seconds');
@@ -199,12 +265,57 @@ class LectureRecordingService extends ChangeNotifier {
     notifyListeners();
     await _saveRecordings();
 
+    // Show native Pal notification with real lecture ID and actionable deep-links
+    await PalNotificationService.instance.showLectureReadyNotification(
+      recording: finalized,
+    );
+
     debugPrint('[DATABASE] Saved new recording ${finalized.id} to storage.');
 
-    // Trigger on-device Whisper & LLM pipeline asynchronously
+    // Trigger shared on-device LectureIntelligenceService pipeline
     _processRecordingPipeline(finalized);
 
     return finalized;
+  }
+
+  /// Stop manual Live Capture session (delegates to shared stopActiveRecording)
+  Future<LectureRecording?> stopLiveCapture() async {
+    return await stopActiveRecording();
+  }
+
+  /// Updates recording in store and notifies listeners
+  Future<void> updateRecordingInStore(LectureRecording updated) async {
+    final idx = _recordings.indexWhere((r) => r.id == updated.id);
+    if (idx != -1) {
+      _recordings[idx] = updated;
+    } else {
+      _recordings.insert(0, updated);
+    }
+    notifyListeners();
+    _saveRecordings();
+  }
+
+  /// Allow the user to rename any lecture recording
+  Future<void> updateRecordingTitle(String id, String newTitle) async {
+    final idx = _recordings.indexWhere((r) => r.id == id);
+    if (idx == -1) return;
+    final cleanTitle = newTitle.trim();
+    if (cleanTitle.isEmpty) return;
+
+    final updated = _recordings[idx].copyWith(
+      subject: cleanTitle,
+      title: cleanTitle,
+    );
+    _recordings[idx] = updated;
+    notifyListeners();
+    _saveRecordings();
+
+    // Reindex in RAG with new title
+    try {
+      RagService.instance.indexLectureRecording(updated);
+    } catch (e) {
+      debugPrint('Notice: RAG reindex error on rename: $e');
+    }
   }
 
   /// Manually trigger or retry transcription for an existing lecture recording
@@ -225,185 +336,13 @@ class LectureRecordingService extends ChangeNotifier {
     await _processRecordingPipeline(_recordings[idx]);
   }
 
-  Future<void> _processRecordingPipeline(LectureRecording recording) async {
-    try {
-      debugPrint(
-          '[TRANSCRIBE] Starting pipeline for Lecture: ${recording.subject}');
-      debugPrint('[TRANSCRIBE] Audio path: ${recording.audioPath}');
-
-      // 1. STT Transcription - strictly using the actual recorded audio file
-      final result =
-          await SttService.instance.transcribeAudioFileWithTimestamps(
-        recording.audioPath,
-      );
-
-      final transcriptText = result.text;
-      final chunks = result.chunks;
-
-      int updatedFileSize = recording.fileSizeBytes;
-      final f = File(recording.audioPath);
-      if (await f.exists()) {
-        updatedFileSize = await f.length();
-      }
-
-      // 2. Deadline Extraction from transcript
-      final extractedDeadlines = <String>[];
-      final deadlineLower = transcriptText.toLowerCase();
-      if (deadlineLower.contains('assignment') ||
-          deadlineLower.contains('due') ||
-          deadlineLower.contains('submit') ||
-          deadlineLower.contains('deadline')) {
-        final newDeadline = DeadlineService.instance
-            .parseNaturalLanguage('${recording.subject}: $transcriptText');
-        DeadlineService.instance.addDeadline(newDeadline);
-        extractedDeadlines.add(newDeadline.id);
-      }
-
-      // 3. Local LLM Summary & Review Questions
-      final summary =
-          await _generateLectureSummary(recording.subject, transcriptText);
-
-      // Update in-memory record
-      final idx = _recordings.indexWhere((r) => r.id == recording.id);
-      if (idx != -1) {
-        _recordings[idx] = _recordings[idx].copyWith(
-          transcriptionStatus: 'completed',
-          summaryStatus: 'completed',
-          transcriptText: transcriptText,
-          chunks: chunks,
-          summary: summary,
-          fileSizeBytes: updatedFileSize,
-          extractedDeadlineIds: extractedDeadlines,
-        );
-        notifyListeners();
-        await _saveRecordings();
-        debugPrint(
-            '[DATABASE] Updated lecture ${recording.id} status to completed with ${chunks.length} chunks.');
-      }
-    } catch (e) {
-      debugPrint('[TRANSCRIBE] Error during lecture processing pipeline: $e');
-      final idx = _recordings.indexWhere((r) => r.id == recording.id);
-      if (idx != -1) {
-        _recordings[idx] = _recordings[idx].copyWith(
-          transcriptionStatus: 'failed',
-          summaryStatus: 'failed',
-          transcriptText: "Couldn't transcribe this recording.",
-          chunks: const [],
-        );
-        notifyListeners();
-        await _saveRecordings();
-        debugPrint(
-            '[DATABASE] Updated lecture ${recording.id} status to failed.');
-      }
-    }
-  }
-
-  Future<LectureSummary> _generateLectureSummary(
-      String subject, String transcript) async {
-    try {
-      final prompt =
-          'You are an academic copilot. Summarize this lecture transcription for "$subject".\n'
-          'Transcription:\n"$transcript"\n\n'
-          'Provide concise bullet points for:\n'
-          '1. Key Points\n2. Important Concepts\n3. Action Items / Homework\n4. Self-Review Questions';
-
-      final stream = LlmService.instance.generateStreaming(prompt: prompt);
-      final buffer = StringBuffer();
-      await for (final token in stream) {
-        buffer.write(token);
-      }
-      final responseText = buffer.toString();
-
-      // Parse structured lists from response or fallback cleanly
-      return _parseLlmSummaryResponse(responseText, subject);
-    } catch (e) {
-      debugPrint('Fallback summary generation due to: $e');
-      return LectureSummary(
-        keyPoints: [
-          'Detailed overview of $subject foundational theories and applications.',
-          'Key terminology and principles introduced during the lecture.',
-          'Practical problem sets and practical problem-solving demonstrated.',
-        ],
-        importantConcepts: [
-          'Core Concept 1 for $subject',
-          'Theoretical frameworks & constraints',
-          'Exam-relevant definitions',
-        ],
-        actionItems: [
-          'Review notes and lecture recording chunks',
-          'Complete assigned problem sets before the next session',
-        ],
-        reviewQuestions: [
-          'What were the main constraints discussed during the lecture?',
-          'How can this concept be applied to practical problem solving?',
-        ],
-      );
-    }
-  }
-
-  LectureSummary _parseLlmSummaryResponse(String text, String subject) {
-    final lines = text.split('\n');
-    final keyPoints = <String>[];
-    final importantConcepts = <String>[];
-    final actionItems = <String>[];
-    final reviewQuestions = <String>[];
-
-    String currentSection = 'keyPoints';
-
-    for (final rawLine in lines) {
-      final line = rawLine.trim();
-      if (line.isEmpty) continue;
-
-      final lower = line.toLowerCase();
-      if (lower.contains('key point') || lower.contains('1.')) {
-        currentSection = 'keyPoints';
-        continue;
-      } else if (lower.contains('concept') || lower.contains('2.')) {
-        currentSection = 'importantConcepts';
-        continue;
-      } else if (lower.contains('action') ||
-          lower.contains('homework') ||
-          lower.contains('3.')) {
-        currentSection = 'actionItems';
-        continue;
-      } else if (lower.contains('question') ||
-          lower.contains('review') ||
-          lower.contains('4.')) {
-        currentSection = 'reviewQuestions';
-        continue;
-      }
-
-      final cleaned = line.replaceFirst(RegExp(r'^[-*•\d\.]+\s*'), '').trim();
-      if (cleaned.length < 3) continue;
-
-      switch (currentSection) {
-        case 'keyPoints':
-          if (keyPoints.length < 5) keyPoints.add(cleaned);
-          break;
-        case 'importantConcepts':
-          if (importantConcepts.length < 5) importantConcepts.add(cleaned);
-          break;
-        case 'actionItems':
-          if (actionItems.length < 5) actionItems.add(cleaned);
-          break;
-        case 'reviewQuestions':
-          if (reviewQuestions.length < 5) reviewQuestions.add(cleaned);
-          break;
-      }
-    }
-
-    if (keyPoints.isEmpty) {
-      keyPoints.add('Covered foundational $subject principles.');
-    }
-    if (importantConcepts.isEmpty) {
-      importantConcepts.add('Key lecture topics and theory.');
-    }
-
-    return LectureSummary(
-      keyPoints: keyPoints,
-      importantConcepts: importantConcepts,
-      actionItems: actionItems,
-      reviewQuestions: reviewQuestions,
+  Future<void> _processRecordingPipeline(
+    LectureRecording recording, {
+    bool forceRetry = false,
+  }) async {
+    await LectureIntelligenceService.instance.processLecture(
+      recording,
+      forceRetry: forceRetry,
     );
   }
 
@@ -422,6 +361,37 @@ class LectureRecordingService extends ChangeNotifier {
       _recordings.removeAt(idx);
       notifyListeners();
       _saveRecordings();
+
+      try {
+        RagService.instance.unindexLectureRecording(id);
+      } catch (e) {
+        debugPrint('Notice: RAG unindex error: $e');
+      }
     }
+  }
+
+  static String _formatMonthDay(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
+  static String _formatTime(DateTime dt) {
+    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $ampm';
   }
 }

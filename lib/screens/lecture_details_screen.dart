@@ -4,16 +4,21 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/lecture_recording.dart';
+import '../services/lecture_intelligence_service.dart';
 import '../services/lecture_recording_service.dart';
 import '../theme/app_theme.dart';
 import 'pal_brain_screen.dart';
+import 'quiz_screen.dart';
+import 'audio_comparison_screen.dart';
 
 class LectureDetailsScreen extends StatefulWidget {
   final LectureRecording recording;
+  final int? initialPositionSeconds;
 
   const LectureDetailsScreen({
     super.key,
     required this.recording,
+    this.initialPositionSeconds,
   });
 
   @override
@@ -74,6 +79,22 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
         });
       }
     });
+
+    if (widget.initialPositionSeconds != null &&
+        widget.initialPositionSeconds! > 0) {
+      _position = Duration(seconds: widget.initialPositionSeconds!);
+      Future.delayed(const Duration(milliseconds: 300), () async {
+        try {
+          if (File(_currentRecording.audioPath).existsSync()) {
+            await _audioPlayer
+                .setSource(DeviceFileSource(_currentRecording.audioPath));
+            await _audioPlayer.seek(_position);
+          }
+        } catch (e) {
+          debugPrint('Note: unable to seek to initial position: $e');
+        }
+      });
+    }
   }
 
   void _onServiceUpdate() {
@@ -174,6 +195,15 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
+  void _openAudioComparison() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AudioComparisonScreen(recording: _currentRecording),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -191,12 +221,13 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _currentRecording.subject,
+              _currentRecording.displayTitle,
               style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: AppTheme.textPrimary,
               ),
+              overflow: TextOverflow.ellipsis,
             ),
             Text(
               '${_currentRecording.scheduledStart} - ${_currentRecording.scheduledEnd} • ${_currentRecording.formattedDuration}',
@@ -208,6 +239,18 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon:
+                const Icon(Icons.compare_arrows, color: AppTheme.primaryAccent),
+            tooltip: 'Compare Audio (A/B Test)',
+            onPressed: _openAudioComparison,
+          ),
+          IconButton(
+            icon:
+                const Icon(Icons.edit_outlined, color: AppTheme.textSecondary),
+            tooltip: 'Rename Lecture',
+            onPressed: _promptRename,
+          ),
           IconButton(
             icon:
                 const Icon(Icons.delete_outline, color: AppTheme.textSecondary),
@@ -411,24 +454,69 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: statusBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      isFailed
-                          ? 'TRANSCRIPTION FAILED'
-                          : _currentRecording.transcriptionStatus.toUpperCase(),
-                      style: TextStyle(
-                        color: statusFg,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: statusBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          isFailed
+                              ? 'TRANSCRIPTION FAILED'
+                              : _currentRecording.transcriptionStatus
+                                  .toUpperCase(),
+                          style: TextStyle(
+                            color: statusFg,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _currentRecording.isLiveCapture
+                              ? AppTheme.detectedPillFill
+                              : AppTheme.neutralPillFill,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppTheme.cardBorder),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _currentRecording.isLiveCapture
+                                  ? Icons.mic
+                                  : Icons.schedule,
+                              size: 11,
+                              color: _currentRecording.isLiveCapture
+                                  ? AppTheme.primaryAccent
+                                  : AppTheme.textSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _currentRecording.isLiveCapture
+                                  ? 'LIVE CAPTURE'
+                                  : 'SCHEDULED',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
+                                color: _currentRecording.isLiveCapture
+                                    ? AppTheme.primaryAccent
+                                    : AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   Text(
                     _currentRecording.formattedDuration,
@@ -442,7 +530,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
               ),
               const SizedBox(height: 14),
               Text(
-                _currentRecording.subject,
+                _currentRecording.displayTitle,
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
@@ -484,7 +572,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
               const SizedBox(height: 6),
               Text(
                 isCompleted
-                    ? 'Transcribed with Whisper Tiny ONNX on-device. Key concepts and deadlines extracted.'
+                    ? 'Transcribed with Whisper Tiny ONNX on-device. Key concepts, deadlines, and RAG index ready.'
                     : (isTranscribing
                         ? 'Whisper ONNX is processing 25-second audio chunks...'
                         : (isFailed
@@ -495,88 +583,224 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
               ),
               const SizedBox(height: 14),
               if (isTranscribing)
-                const Row(
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: AppTheme.primaryAccent),
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: AppTheme.primaryAccent),
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Transcribing locally with Whisper ONNX...',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryAccent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      LectureRecordingService.instance.transcribeLecture(
+                        _currentRecording.id,
+                        forceRetry: true,
+                      );
+                    },
+                    icon: Icon(
+                      isCompleted ? Icons.refresh : Icons.text_snippet_outlined,
+                      size: 16,
+                      color: Colors.white,
                     ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Transcribing locally...',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.primaryAccent,
-                      ),
+                    label: Text(
+                      isCompleted
+                          ? 'Transcribe Again'
+                          : (isFailed ? 'Try Again' : 'Transcribe'),
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w600),
                     ),
-                  ],
-                )
-              else
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        LectureRecordingService.instance.transcribeLecture(
-                          _currentRecording.id,
-                          forceRetry: true,
-                        );
-                      },
-                      icon: Icon(
-                        isCompleted
-                            ? Icons.refresh
-                            : Icons.text_snippet_outlined,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                      label: Text(
-                        isCompleted
-                            ? 'Transcribe Again'
-                            : (isFailed ? 'Try Again' : 'Transcribe'),
-                        style: const TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.w600),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryAccent,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                      ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryAccent,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
                     ),
-                    const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => PalBrainScreen(
-                              initialQuery:
-                                  'Summarize the ${_currentRecording.subject} lecture and clarify key points.',
-                            ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      final hasTranscript =
+                          _currentRecording.transcriptText.trim().isNotEmpty ||
+                              _currentRecording.chunks.isNotEmpty;
+                      final isTranscribing =
+                          _currentRecording.transcriptionStatus ==
+                              'transcribing';
+
+                      if (isTranscribing) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                                'Whisper transcription in progress. Pal will be ready once transcription completes.'),
+                            duration: Duration(seconds: 3),
                           ),
                         );
-                      },
-                      icon: const Icon(Icons.psychology_outlined,
-                          size: 16, color: AppTheme.primaryAccent),
-                      label: const Text(
-                        'Ask Pal',
-                        style: TextStyle(
-                            color: AppTheme.primaryAccent,
-                            fontWeight: FontWeight.w600),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppTheme.primaryAccent),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                      ),
+                        return;
+                      }
+
+                      if (!hasTranscript) {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: AppTheme.cardSurface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side:
+                                  const BorderSide(color: AppTheme.cardBorder),
+                            ),
+                            title: const Row(
+                              children: [
+                                Icon(Icons.psychology_outlined,
+                                    color: AppTheme.primaryAccent, size: 22),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Transcript Needed',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            content: const Text(
+                              'Pal needs the lecture transcript first to analyze concepts and answer questions grounded in the lecture audio.',
+                              style: TextStyle(
+                                  fontSize: 13, color: AppTheme.textSecondary),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(),
+                                child: const Text('Cancel',
+                                    style: TextStyle(
+                                        color: AppTheme.textSecondary)),
+                              ),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryAccent,
+                                  foregroundColor: AppTheme.primaryButtonText,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed: () {
+                                  Navigator.of(ctx).pop();
+                                  LectureRecordingService.instance
+                                      .transcribeLecture(
+                                    _currentRecording.id,
+                                    forceRetry: true,
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'Starting local Whisper transcription...'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.text_snippet_outlined,
+                                    size: 16),
+                                label: const Text('Transcribe Recording'),
+                              ),
+                            ],
+                          ),
+                        );
+                        return;
+                      }
+
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PalBrainScreen(
+                            lectureRecording: _currentRecording,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.psychology_outlined,
+                        size: 16, color: AppTheme.primaryAccent),
+                    label: const Text(
+                      'Ask Pal',
+                      style: TextStyle(
+                          color: AppTheme.primaryAccent,
+                          fontWeight: FontWeight.w600),
                     ),
-                  ],
-                ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppTheme.primaryAccent),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      final questions = LectureIntelligenceService.instance
+                          .generateQuizQuestions(_currentRecording);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => QuizScreen(
+                            customQuestions: questions,
+                            title: 'Quiz · ${_currentRecording.displayTitle}',
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.quiz_outlined,
+                        size: 16, color: AppTheme.detectedPillText),
+                    label: const Text(
+                      'Quiz Me',
+                      style: TextStyle(
+                          color: AppTheme.detectedPillText,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppTheme.detectedPillText),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openAudioComparison,
+                    icon: const Icon(Icons.compare_arrows,
+                        size: 16, color: AppTheme.primaryAccent),
+                    label: const Text(
+                      'Compare Audio',
+                      style: TextStyle(
+                          color: AppTheme.primaryAccent,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppTheme.primaryAccent),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -845,12 +1069,24 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
                 ),
               ),
               const Spacer(),
-              const Text(
-                'Tap timestamp to seek',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textInactive,
-                  fontStyle: FontStyle.italic,
+              IconButton(
+                icon: const Icon(Icons.compare_arrows,
+                    size: 18, color: AppTheme.primaryAccent),
+                tooltip: 'Compare Audio (A/B)',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: _openAudioComparison,
+              ),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text(
+                  'Tap to seek',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppTheme.textInactive,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -1142,6 +1378,72 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen>
             style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.overduePillText),
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _promptRename() {
+    final controller =
+        TextEditingController(text: _currentRecording.displayTitle);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.cardBorder),
+        ),
+        title: const Text(
+          'Rename Lecture',
+          style: TextStyle(
+            color: AppTheme.textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'Enter lecture title',
+            hintStyle: const TextStyle(color: AppTheme.textInactive),
+            filled: true,
+            fillColor: AppTheme.neutralPillFill,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppTheme.cardBorder),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newTitle = controller.text.trim();
+              if (newTitle.isNotEmpty) {
+                LectureRecordingService.instance
+                    .updateRecordingTitle(_currentRecording.id, newTitle);
+                setState(() {
+                  _currentRecording = _currentRecording.copyWith(
+                    subject: newTitle,
+                    title: newTitle,
+                  );
+                });
+              }
+              Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryAccent),
+            child: const Text('Save',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

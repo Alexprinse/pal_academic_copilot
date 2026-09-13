@@ -51,7 +51,8 @@ class RecordingScheduler {
     final currentHourDouble = now.hour + (now.minute / 60.0);
 
     for (final entry in todayClasses) {
-      final startDiffMinutes = ((entry.startHourDouble - currentHourDouble) * 60).round();
+      final startDiffMinutes =
+          ((entry.startHourDouble - currentHourDouble) * 60).round();
 
       // 1. Pre-class notification (approx 10 minutes prior, between 8 and 12 min)
       if (startDiffMinutes >= 8 && startDiffMinutes <= 12) {
@@ -87,6 +88,17 @@ class RecordingScheduler {
         }
       }
     }
+
+    // 4. Update ongoing recording notification with real elapsed duration
+    final active = LectureRecordingService.instance.activeRecording;
+    if (active != null) {
+      final elapsed = now.difference(active.actualStart).inSeconds;
+      PalNotificationService.instance.showRecordingNotification(
+        subject: active.displayTitle,
+        recordingId: active.id,
+        elapsedSeconds: elapsed,
+      );
+    }
   }
 
   /// Developer 1-minute test mode to simulate the full lifecycle without waiting:
@@ -97,7 +109,8 @@ class RecordingScheduler {
     int durationSeconds = 15,
   }) {
     _isTestModeActive = true;
-    debugPrint('Test lecture scheduled in $delaySeconds seconds for $durationSeconds seconds duration.');
+    debugPrint(
+        'Test lecture scheduled in $delaySeconds seconds for $durationSeconds seconds duration.');
 
     Timer(Duration(seconds: delaySeconds), () async {
       final testEntry = TimetableEntry(
@@ -110,7 +123,8 @@ class RecordingScheduler {
         type: 'Lecture',
       );
 
-      await LectureRecordingService.instance.startClassRecording(entry: testEntry);
+      await LectureRecordingService.instance
+          .startClassRecording(entry: testEntry);
 
       Timer(Duration(seconds: durationSeconds), () async {
         await LectureRecordingService.instance.stopActiveRecording();
